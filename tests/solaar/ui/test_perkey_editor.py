@@ -122,3 +122,37 @@ def test_editor_undo_redo_writes_through_sink():
     editor.redo()
     assert sink.colors == {1: 0x613583, 2: 0x613583, 3: 0x613583}
     editor.shutdown()
+
+
+def _editor_or_skip():
+    Gtk = pytest.importorskip("gi.repository.Gtk")
+    if not Gtk.init_check()[0]:
+        pytest.skip("no display for GTK")
+    from solaar.ui.perkey.editor import PerKeyEditor
+
+    return Gtk, PerKeyEditor(_FakeSink())
+
+
+def _button_text(Gtk, button):
+    child = button.get_child()
+    if isinstance(child, Gtk.Label):
+        return child.get_text()
+    return " ".join(w.get_text() for w in child.get_children() if isinstance(w, Gtk.Label))
+
+
+def test_tool_buttons_show_their_names():
+    Gtk, editor = _editor_or_skip()
+
+    assert _button_text(Gtk, editor._tool_buttons["single"]) == "Brush"
+    assert _button_text(Gtk, editor._tool_buttons["bucket"]) == "Fill"
+    editor.shutdown()
+
+
+def test_tool_hint_follows_active_tool():
+    _Gtk, editor = _editor_or_skip()
+
+    assert editor._tool_hint.get_text().startswith("Brush:")
+    editor._tool_buttons["bucket"].set_active(True)
+    assert editor._tool_hint.get_text().startswith("Fill:")
+    assert "unpainted" in editor._tool_hint.get_text()
+    editor.shutdown()

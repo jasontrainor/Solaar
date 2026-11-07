@@ -93,8 +93,9 @@ def _fg_color_key(widget: Gtk.Widget) -> tuple[float, float, float]:
     return (round(fg.red, 3), round(fg.green, 3), round(fg.blue, 3))
 
 
-def attach_themed_icon(button: Gtk.Container, icon_name: str) -> int | None:
-    """Add a themed icon to `button` and re-render it whenever the active
+def attach_themed_icon(button: Gtk.Container, icon_name: str, label: str | None = None) -> int | None:
+    """Add a themed icon (and, if given, a text label beside it) to `button`
+    and re-render the icon whenever the active
     GTK theme changes the button's foreground color. Returns the
     style-updated signal handler ID, or None if the icon couldn't be
     loaded (in which case the button is left unchanged so the caller can
@@ -112,9 +113,17 @@ def attach_themed_icon(button: Gtk.Container, icon_name: str) -> int | None:
     image = themed_icon_image(icon_name, button)
     if image is None:
         return None
-    button.add(image)
-    image.show()
-    state = {"color_key": _fg_color_key(button)}
+    if label:
+        holder = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        holder.pack_start(image, False, False, 0)
+        holder.pack_start(Gtk.Label(label=label), False, False, 0)
+        button.add(holder)
+        holder.show_all()
+    else:
+        holder = button
+        button.add(image)
+        image.show()
+    state = {"color_key": _fg_color_key(button), "image": image}
 
     def _refresh(_widget) -> None:
         new_key = _fg_color_key(button)
@@ -124,10 +133,13 @@ def attach_themed_icon(button: Gtk.Container, icon_name: str) -> int | None:
         new_image = themed_icon_image(icon_name, button)
         if new_image is None:
             return
-        old = button.get_child()
-        if old is not None:
-            button.remove(old)
-        button.add(new_image)
+        holder.remove(state["image"])
+        if isinstance(holder, Gtk.Box):
+            holder.pack_start(new_image, False, False, 0)
+            holder.reorder_child(new_image, 0)
+        else:
+            holder.add(new_image)
         new_image.show()
+        state["image"] = new_image
 
     return button.connect("style-updated", _refresh)

@@ -56,7 +56,13 @@ class GtkSignal(Enum):
 _TOOL_LABELS = {
     "single": (_("Brush"), _("Click or drag to paint individual keys")),
     "rect": (_("Rect"), _("Drag to select a rectangle of keys, painted on release")),
-    "bucket": (_("Fill"), _("Flood-fill connected keys of the same color with the active color")),
+    "bucket": (
+        _("Fill"),
+        _(
+            "Click a key to recolor it and every connected key of the same color "
+            "(clicking an unpainted key fills all connected unpainted keys)"
+        ),
+    ),
 }
 _TOOL_TOOLTIPS = {
     "gradient": _("Drag to fade from previous color to active color"),
@@ -94,7 +100,7 @@ class PerKeyEditor(Gtk.Box):
                 icon_name = _TOOL_ICON_NAMES.get(name)
                 btn = Gtk.RadioButton.new_from_widget(first)
                 btn.set_mode(False)  # render as toggle button rather than radio
-                if icon_name and attach_themed_icon(btn, icon_name) is not None:
+                if icon_name and attach_themed_icon(btn, icon_name, label) is not None:
                     btn.set_tooltip_text(tip or label)
                     btn.get_accessible().set_name(label)
                 else:
@@ -130,6 +136,16 @@ class PerKeyEditor(Gtk.Box):
             self._gradient_swatch.update(self._palette.get_color(), self._palette.get_last_color())
 
         self.pack_start(toolbar, False, False, 0)
+
+        # Always-visible description of the active tool, so it's clear what a
+        # click or drag will do before it happens.
+        self._tool_hint = Gtk.Label(xalign=0)
+        self._tool_hint.set_line_wrap(True)
+        self._tool_hint.set_max_width_chars(60)  # wrap within the canvas width, don't widen the window
+        self._tool_hint.get_style_context().add_class("dim-label")
+        self.pack_start(self._tool_hint, False, False, 0)
+        if supported:
+            self._show_tool_hint(supported[0])
 
         # canvas inside a scrolled window so wide layouts can scroll if the
         # window is shrunk below content size. propagate_natural_size lets the
@@ -208,6 +224,14 @@ class PerKeyEditor(Gtk.Box):
     def _on_tool_toggled(self, btn: Gtk.RadioButton, name: str) -> None:
         if btn.get_active():
             self._canvas.set_tool(name)
+            self._show_tool_hint(name)
+
+    def _show_tool_hint(self, name: str) -> None:
+        if name == "gradient":
+            label, tip = _("Gradient"), _TOOL_TOOLTIPS["gradient"]
+        else:
+            label, tip = _TOOL_LABELS.get(name, (name, ""))
+        self._tool_hint.set_text(f"{label}: {tip}" if tip else label)
 
     def _history_button(self, icon_name: str, label: str, tip: str, action) -> Gtk.Button:
         btn = Gtk.Button.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON)
