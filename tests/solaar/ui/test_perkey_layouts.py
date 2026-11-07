@@ -76,7 +76,7 @@ def _full_zone_hint(name):
 
 
 def test_tkl_name_overrides_reported_numpad_zones():
-    layout = layout_for(0x8081, _full_zone_hint("G915 X LS TKL"))
+    layout = layout_for(0x8081, _full_zone_hint("G815 LS TKL"))
 
     assert layout.description == "ANSI QWERTY tenkeyless"
 
@@ -85,3 +85,40 @@ def test_full_size_board_with_numpad_zones_stays_full():
     layout = layout_for(0x8081, _full_zone_hint("G915 X LS"))
 
     assert layout.description == "ANSI QWERTY 104-key full-size"
+
+
+def test_g915x_tkl_gets_top_bar():
+    layout = layout_for(0x8081, _full_zone_hint("G915 X LS TKL"))
+
+    assert layout.description == "G915 X TKL"
+    top = {c.zone_id: (c.row, c.col, c.label) for c in layout.cells if c.group == "media"}
+    assert top == {
+        210: (0, 0, "Logo"),
+        153: (0, 5, "Bright"),
+        158: (0, 10, "Prev"),
+        155: (0, 11, "Play"),
+        157: (0, 12, "Next"),
+        156: (0, 13, "Mute"),
+    }
+    esc = next(c for c in layout.cells if c.zone_id == 38)
+    assert esc.row == 1
+
+
+def test_g915x_tkl_top_bar_paints_in_place_and_numpad_stays_hidden():
+    hint = _full_zone_hint("G915 X LS TKL")
+    bound = bind(layout_for(0x8081, hint), hint["zones"], lambda z: f"KEY {z}")
+
+    top = {bc.cell.zone_id for bc in bound.matrix if bc.cell.group == "media" and bc.bound}
+    assert top == {210, 153, 155, 156, 157, 158}
+    assert not bound.strip  # nothing left over for the bottom strip
+    drawn = {bc.cell.zone_id for bc in bound.matrix}
+    assert 80 not in drawn and 95 not in drawn  # phantom numpad zones
+
+
+def test_g915x_tkl_still_regional():
+    hint = _full_zone_hint("G915 X LS TKL")
+    hint["keyboard_layout"] = 2  # ISO QWERTY
+
+    layout = layout_for(0x8081, hint)
+    assert layout.description == "G915 X TKL"
+    assert any(c.zone_id == 97 for c in layout.cells)  # ISO extra key

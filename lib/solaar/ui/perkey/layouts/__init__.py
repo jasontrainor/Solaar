@@ -28,6 +28,7 @@ from collections.abc import Callable
 from ..layout import Layout
 from . import headset_g522
 from . import keyboard_ansi
+from . import keyboard_g915x_tkl
 from . import keyboard_iso_azerty
 from . import keyboard_iso_qwerty
 from . import keyboard_iso_qwertz
@@ -169,6 +170,25 @@ def _pro_x_rapid_matcher(family: str) -> Callable[[dict], bool]:
 # Registered ahead of the generic family matchers so it wins for this model.
 for _family, (_full, _tkl) in _FAMILY_LAYOUTS.items():
     register_layout(0x8081, _pro_x_rapid_matcher(_family), keyboard_pro_x_rapid.with_media_top_row(_tkl))
+
+
+def _g915x_tkl_matcher(family: str) -> Callable[[dict], bool]:
+    """Match the G915 X LIGHTSPEED TKL (reported as "G915 X LS TKL") for one
+    region. Name-matched because the board reports numpad zones it lacks."""
+    named = _name_contains("G915 X")
+
+    def match(hint: dict) -> bool:
+        if hint.get("kind") != "keyboard" or not named(hint):
+            return False
+        if _is_full_size(hint):
+            return False
+        return _keyboard_family(hint) == family
+
+    return match
+
+
+for _family, (_full, _tkl) in _FAMILY_LAYOUTS.items():
+    register_layout(0x8081, _g915x_tkl_matcher(_family), keyboard_g915x_tkl.with_top_bar(_tkl))
 
 # PER_KEY_LIGHTING_V2 = 0x8081
 for _family, (_full, _tkl) in _FAMILY_LAYOUTS.items():

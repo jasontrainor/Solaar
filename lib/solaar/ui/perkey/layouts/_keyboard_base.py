@@ -234,3 +234,36 @@ def build_layout(
         extra_zones=EXTRAS_ALLOWLIST,
         description=description,
     )
+
+
+def with_top_row(base: Layout, top_cells: tuple[Cell, ...], description: str) -> Layout:
+    """Return `base` with every cell pushed down one row and `top_cells`
+    placed in the new row 0, for boards with lit keys above the F-row.
+
+    Top-row cells are explicit matrix cells, so they paint in place and claim
+    their zones (keeping them out of the bottom strip), while `base`'s
+    `extra_zones` still filters firmware phantom zones.
+    """
+    shifted = tuple(
+        Cell(
+            zone_id=c.zone_id,
+            row=c.row + 1,
+            col=c.col,
+            width=c.width,
+            height=c.height,
+            group=c.group,
+            label=c.label,
+            x=c.x,
+            y=c.y,
+        )
+        for c in base.cells
+    )
+    return Layout(
+        cells=top_cells + shifted,
+        rows=base.rows + 1,
+        cols=base.cols,
+        strip_groups=base.strip_groups,
+        supported_tools=base.supported_tools,
+        extra_zones=base.extra_zones,
+        description=description,
+    )

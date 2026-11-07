@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from ..layout import Cell
 from ..layout import Layout
+from ._keyboard_base import with_top_row
 
 # Dedicated media keys, hardware-probed. Columns align above the F-row
 # (F4=col5, F9-F12=cols10-13). Zone ids are board-specific — NOT the canonical
@@ -42,33 +43,5 @@ MEDIA_TOP_ROW: tuple[Cell, ...] = (
 
 
 def with_media_top_row(base: Layout) -> Layout:
-    """Return `base` with every cell pushed down one row and the PRO X RAPID
-    media top row placed at row 0.
-
-    The media keys are explicit bound cells, so they paint directly with no
-    EXTRAS_ALLOWLIST entry, while `base`'s `extra_zones` still filters the
-    phantom zones this board shares with the G515 (47, 97, 99-103, 254).
-    """
-    shifted = tuple(
-        Cell(
-            zone_id=c.zone_id,
-            row=c.row + 1,
-            col=c.col,
-            width=c.width,
-            height=c.height,
-            group=c.group,
-            label=c.label,
-            x=c.x,
-            y=c.y,
-        )
-        for c in base.cells
-    )
-    return Layout(
-        cells=MEDIA_TOP_ROW + shifted,
-        rows=base.rows + 1,
-        cols=base.cols,
-        strip_groups=base.strip_groups,
-        supported_tools=base.supported_tools,
-        extra_zones=base.extra_zones,
-        description="PRO X RAPID",
-    )
+    """Return `base` with the PRO X RAPID media top row placed above it."""
+    return with_top_row(base, MEDIA_TOP_ROW, "PRO X RAPID")
