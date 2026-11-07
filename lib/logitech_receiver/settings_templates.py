@@ -4002,6 +4002,11 @@ class PerKeyLighting(settings.Settings):
         # also fixes `solaar show` showing every key as "No change" on the
         # live line — it now matches what's actually on the keyboard.
         self._pre_read(cached)
+        if self._value is not None and not isinstance(self._value, dict):
+            # A corrupt saved value (older Solaar could persist a bare key name
+            # here) — discard it rather than hand callers a non-map.
+            logger.warning("%s: discarding invalid saved per-key value %r", self._device, self._value)
+            self._value = None
         if self._value is not None:
             return self._value
         reply_map = {}
@@ -4063,6 +4068,11 @@ class PerKeyLighting(settings.Settings):
         return ok
 
     def write(self, map, save=True):
+        if not isinstance(map, dict):
+            # Never persist a non-map value: it would replace every saved key
+            # color and break later reads.
+            logger.warning("%s: ignoring per-key write of non-map value %r", self._device, map)
+            return None
         if self._device.online:
             # Persist undimmed (single source of truth).
             self.update(map, save)

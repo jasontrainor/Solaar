@@ -221,6 +221,8 @@ def run(receivers, args, _find_receiver, find_device):
 
     # don't save configuration here because we might want the Solaar GUI to make the change
     result, message, value = set(dev, setting, args, False)
+    if result is None and message is None:
+        return  # only printed the setting (e.g. a key with no value): nothing to forward or save
     if message is not None:
         print(message)
         if result is None:
