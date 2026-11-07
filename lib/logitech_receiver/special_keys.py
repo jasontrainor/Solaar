@@ -1492,7 +1492,7 @@ KEYCODES = NamedInts(
         "F12": 66,
         "PRINT": 67,
         "SCROLL LOCK": 68,
-        "PASTE": 69,
+        "PAUSE": 69,  # Pause/Break (HID usage 0x48); zone ids are HID usage - 3
         "INSERT": 70,
         "HOME": 71,
         "PAGE UP": 72,
@@ -1531,7 +1531,7 @@ KEYCODES = NamedInts(
         "RIGHT ALTGR": 110,
         "RIGHT WINDOWS": 111,
         "BRIGHTNESS": 153,
-        "PAUSE": 155,
+        "PLAY/PAUSE": 155,
         "MUTE": 156,
         "NEXT": 157,
         "PREVIOUS": 158,
