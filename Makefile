@@ -8,7 +8,7 @@ PIP_ARGS ?= .
 .PHONY: install_ubuntu install_macos
 .PHONY: install_apt install_brew install_pip
 .PHONY: install_udev install_udev_uinput reload_udev uninstall_udev
-.PHONY: format lint test
+.PHONY: format lint test dev_venv dev_test dev_lint
 
 install_ubuntu: install_apt install_udev_uinput install_pip
 
@@ -72,3 +72,19 @@ lint:
 test:
 	@echo "Running Solaar tests"
 	pytest --cov --cov-report=xml
+
+# Local development environment: a .venv that reuses the system GTK/GObject
+# bindings (no compiling) plus the test and lint tools from setup.py extras.
+VENV ?= .venv
+
+dev_venv:
+	@echo "Creating development environment in $(VENV)"
+	python3 -m venv --system-site-packages $(VENV)
+	$(VENV)/bin/pip install -e '.[test,dev]'
+
+dev_test:
+	$(VENV)/bin/python -m pytest
+
+dev_lint:
+	$(VENV)/bin/python -m ruff check .
+	$(VENV)/bin/python -m ruff format --check .

@@ -84,7 +84,7 @@ setup(
         "desktop-notifications": ["Notify (>= 0.7)"],
         "git-commit": ["python-git-info"],
         "test": ["pytest", "pytest-mock", "pytest-cov"],
-        "dev": ["ruff"],
+        "dev": ["ruff==0.2.2"],  # keep in step with .pre-commit-config.yaml
     },
     package_dir={"": "lib"},
     packages=find_packages(where="lib"),

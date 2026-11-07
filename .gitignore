@@ -23,6 +23,7 @@ __pycache__/
 /po/*.po~
 
 /.idea/
+/.venv/
 
 .DS_Store
 ._*
