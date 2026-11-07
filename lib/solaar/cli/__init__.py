@@ -85,6 +85,17 @@ def _create_parser():
     sp.set_defaults(action="config")
 
     sp = subparsers.add_parser(
+        "theme",
+        description="List, save, apply, delete, import or export per-key lighting themes.",
+        epilog="Themes are stored in ~/.config/solaar/themes/.  "
+        "Usage: theme list | theme save <device> <name> | theme apply <device> <name> | "
+        "theme delete <name> | theme import <file> | theme export <name> <file>",
+    )
+    sp.add_argument("command", choices=["list", "save", "apply", "delete", "import", "export"], help="theme action")
+    sp.add_argument("args", nargs="*", help="device, theme name and/or file, depending on the action")
+    sp.set_defaults(action="theme")
+
+    sp = subparsers.add_parser(
         "pair",
         description="Pair a new device with a receiver.  The device has to be compatible with the receiver.",
         epilog="The Logitech Unifying Receiver supports up to 6 paired devices at the same time.",
@@ -232,7 +243,12 @@ def run(cli_args=None, hidraw_path=None):
     assert action in actions
 
     try:
-        if action == "show" or action == "probe" or action == "config" or action == "profiles":
+        if action == "theme" and args.command not in ("save", "apply"):
+            # Managing theme files doesn't need a device.
+            m = import_module("." + action, package=__name__)
+            m.run([], args, _find_receiver, _find_device)
+            return
+        if action == "show" or action == "probe" or action == "config" or action == "profiles" or action == "theme":
             c = list(_receivers_and_devices(hidraw_path))
         else:
             c = list(_receivers(hidraw_path))
