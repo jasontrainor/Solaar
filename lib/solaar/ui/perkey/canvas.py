@@ -28,9 +28,12 @@ from typing import Callable
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk  # NOQA: E402
 from gi.repository import GObject  # NOQA: E402
 from gi.repository import Gtk  # NOQA: E402
+from gi.repository import Pango  # NOQA: E402
+from gi.repository import PangoCairo  # NOQA: E402
 
 from .layout import BoundCell  # NOQA: E402
 from .layout import BoundLayout  # NOQA: E402
@@ -53,6 +56,13 @@ CELL_PX = 36
 GUTTER_PX = 4
 STRIP_GAP_PX = 16
 PADDING_PX = 8
+
+
+def _luminance(color: int) -> float:
+    r = ((color >> 16) & 0xFF) / 255.0
+    g = ((color >> 8) & 0xFF) / 255.0
+    b = (color & 0xFF) / 255.0
+    return 0.299 * r + 0.587 * g + 0.114 * b
 
 
 class KeyboardCanvas(Gtk.DrawingArea):
@@ -227,15 +237,34 @@ class KeyboardCanvas(Gtk.DrawingArea):
         cr.stroke()
         # label
         label = bc.cell.label or str(bc.cell.zone_id)
-        cr.set_source_rgba(*self._label_color(color, bc.bound))
-        cr.select_font_face("Sans")
-        cr.set_font_size(11.0 if len(label) <= 3 else 9.0)
+        unset = bc.bound and (color is None or color < 0)
         try:
-            extents = cr.text_extents(label)
-            tx = x + (w - extents.width) / 2 - extents.x_bearing
-            ty = y + (h + extents.height) / 2 - extents.y_bearing - extents.height
+            # Pango (not cairo's toy text API) so glyphs missing from the
+            # default font, e.g. the arrow keys, fall back to another font.
+            text = PangoCairo.create_layout(cr)
+            font = Pango.FontDescription.from_string("Sans")
+            size = 11.0 if len(label) <= 3 else 9.0
+            text.set_text(label, -1)
+            while True:  # shrink long labels (e.g. BRIGHTNESS) to fit the cell
+                font.set_absolute_size(size * Pango.SCALE)
+                text.set_font_description(font)
+                _ink, logical = text.get_pixel_extents()
+                if logical.width <= w - 4 or size <= 6.0:
+                    break
+                size -= 0.5
+            tx = x + (w - logical.width) / 2 - logical.x
+            ty = y + (h - logical.height) / 2 - logical.y
+            if unset:
+                # The hatch stripes make any single text color hard to read,
+                # so put the label on a solid plate that contrasts with it.
+                plate_w = min(w - 4, logical.width + 6)
+                plate_h = min(h - 4, logical.height + 2)
+                cr.set_source_rgba(*self._unset_plate_color())
+                self._round_rect(cr, x + (w - plate_w) / 2, y + (h - plate_h) / 2, plate_w, plate_h, 3)
+                cr.fill()
+            cr.set_source_rgba(*self._label_color(color, bc.bound))
             cr.move_to(tx, ty)
-            cr.show_text(label)
+            PangoCairo.show_layout(cr, text)
         except Exception as e:
             logger.debug("text rendering failed for %r: %s", label, e)
 
@@ -323,13 +352,16 @@ class KeyboardCanvas(Gtk.DrawingArea):
         if not bound:
             return (0.50, 0.50, 0.52, 1.0)
         if color is None or color < 0:
-            return (0.85, 0.85, 0.88, 1.0)
-        # luminance heuristic
-        r = ((color >> 16) & 0xFF) / 255.0
-        g = ((color >> 8) & 0xFF) / 255.0
-        b = (color & 0xFF) / 255.0
-        lum = 0.299 * r + 0.587 * g + 0.114 * b
-        return (0, 0, 0, 1.0) if lum > 0.55 else (1, 1, 1, 1.0)
+            # Text sits on the plate from _unset_plate_color: use the opposite.
+            return (0, 0, 0, 1.0) if self._unset_plate_is_light() else (1, 1, 1, 1.0)
+        return (0, 0, 0, 1.0) if _luminance(color) > 0.55 else (1, 1, 1, 1.0)
+
+    def _unset_plate_is_light(self) -> bool:
+        base = self._zone_base_color
+        return base is not None and base >= 0 and _luminance(base) > 0.55
+
+    def _unset_plate_color(self) -> tuple[float, float, float, float]:
+        return (1, 1, 1, 0.80) if self._unset_plate_is_light() else (0, 0, 0, 0.65)
 
     def _draw_rect_overlay(self, cr, a: BoundCell, b: BoundCell) -> None:
         ax, ay, aw, ah = self._cell_rect(a)

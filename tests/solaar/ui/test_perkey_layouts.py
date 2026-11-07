@@ -60,3 +60,28 @@ def test_non_rapid_tkl_unaffected():
 
     assert layout.description != "PRO X RAPID"
     assert not any(c.group == "media" for c in layout.cells)
+
+
+def _full_zone_hint(name):
+    # G915 X LS TKL reports every zone 1-111 (numpad included) plus media keys.
+    return {
+        "kind": "keyboard",
+        "wpid": "40B6",
+        "codename": name,
+        "name": name,
+        "keyboard_layout": 1,
+        "zones": [*range(1, 112), 153, 155, 156, 157, 158, 210],
+        "zone_count": 117,
+    }
+
+
+def test_tkl_name_overrides_reported_numpad_zones():
+    layout = layout_for(0x8081, _full_zone_hint("G915 X LS TKL"))
+
+    assert layout.description == "ANSI QWERTY tenkeyless"
+
+
+def test_full_size_board_with_numpad_zones_stays_full():
+    layout = layout_for(0x8081, _full_zone_hint("G915 X LS"))
+
+    assert layout.description == "ANSI QWERTY 104-key full-size"

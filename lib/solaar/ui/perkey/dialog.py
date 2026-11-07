@@ -41,6 +41,7 @@ from .protocol import PerKeyColorSink  # NOQA: E402
 
 class GtkSignal(Enum):
     DELETE_EVENT = "delete-event"
+    KEY_PRESS_EVENT = "key-press-event"
 
 
 _dialogs: dict[Hashable, "PerKeyEditorDialog"] = {}
@@ -58,6 +59,9 @@ class PerKeyEditorDialog:
         self._destroy()
         _dialogs.pop(self._key, None)
         return True
+
+    def _on_key_press(self, _w, event) -> bool:
+        return self._editor.handle_key(event) if self._editor is not None else False
 
     def _destroy(self) -> None:
         if self._editor is not None:
@@ -86,6 +90,7 @@ class PerKeyEditorDialog:
         self._window = Gtk.Window()
         self._window.set_title(_("Per-key Lighting") + " — " + sink.title)
         self._window.connect(GtkSignal.DELETE_EVENT.value, self._on_delete)
+        self._window.connect(GtkSignal.KEY_PRESS_EVENT.value, self._on_key_press)
         self._wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._wrapper.set_border_width(8)
         self._window.add(self._wrapper)

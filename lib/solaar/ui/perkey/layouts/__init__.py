@@ -115,6 +115,17 @@ def _has_numpad(hint: dict) -> bool:
     return 80 in zones or 95 in zones
 
 
+_is_tkl_by_name = _name_contains("TKL")
+
+
+def _is_full_size(hint: dict) -> bool:
+    """Full-size iff the board reports numpad zones and its name doesn't say
+    TKL. Some tenkeyless boards (e.g. G915 X LS TKL) report the complete
+    1-111 zone range, numpad included, so zones alone can't tell them apart.
+    """
+    return _has_numpad(hint) and not _is_tkl_by_name(hint)
+
+
 def _keyboard_family(hint: dict) -> str:
     """Pick a layout family from the device's HID++ keyboard layout country
     code. Defaults to "ansi" when the code is missing or unknown.
@@ -129,7 +140,7 @@ def _keyboard_matcher(family: str, full_size: bool) -> Callable[[dict], bool]:
     def match(hint: dict) -> bool:
         if hint.get("kind") != "keyboard":
             return False
-        if _has_numpad(hint) != full_size:
+        if _is_full_size(hint) != full_size:
             return False
         return _keyboard_family(hint) == family
 
@@ -147,7 +158,7 @@ def _pro_x_rapid_matcher(family: str) -> Callable[[dict], bool]:
             return False
         if not named(hint):
             return False
-        if _has_numpad(hint):  # PRO X RAPID is TKL
+        if _is_full_size(hint):  # PRO X RAPID is TKL
             return False
         return _keyboard_family(hint) == family
 

@@ -29,6 +29,7 @@ from enum import Enum
 import gi
 
 gi.require_version("Gtk", "3.0")
+from gi.repository import Gdk  # NOQA: E402
 from gi.repository import Gtk  # NOQA: E402
 
 from solaar.i18n import _  # NOQA: E402
@@ -36,6 +37,7 @@ from solaar.i18n import _  # NOQA: E402
 from . import binding  # NOQA: E402
 from ._icons import attach_themed_icon  # NOQA: E402
 from .canvas import KeyboardCanvas  # NOQA: E402
+from .history import PaintHistory  # NOQA: E402
 from .layout import Layout  # NOQA: E402
 from .palette import GradientSwatch  # NOQA: E402
 from .palette import Palette  # NOQA: E402
@@ -45,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 class GtkSignal(Enum):
+    CLICKED = "clicked"
     COLOR_CHANGED = "color-changed"
     PAINT = "paint"
     TOGGLED = "toggled"
@@ -71,6 +74,7 @@ class PerKeyEditor(Gtk.Box):
         self._sink = sink
         self._layout = layout
         self._unsubscribe = None
+        self._history = PaintHistory()
 
         # toolbar row
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -101,6 +105,15 @@ class PerKeyEditor(Gtk.Box):
                 first = btn
             toolbar.pack_start(btn, False, False, 0)
             self._tool_buttons[name] = btn
+
+        toolbar.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 0)
+        self._undo_btn = self._history_button("edit-undo-symbolic", _("Undo"), _("Undo the last paint (Ctrl+Z)"), self.undo)
+        self._redo_btn = self._history_button(
+            "edit-redo-symbolic", _("Redo"), _("Redo the last undone paint (Ctrl+Shift+Z or Ctrl+Y)"), self.redo
+        )
+        toolbar.pack_start(self._undo_btn, False, False, 0)
+        toolbar.pack_start(self._redo_btn, False, False, 0)
+        self._update_history_buttons()
 
         initial_active, initial_previous = 0xFF0000, 0xFF0000
         try:
@@ -196,9 +209,54 @@ class PerKeyEditor(Gtk.Box):
         if btn.get_active():
             self._canvas.set_tool(name)
 
+    def _history_button(self, icon_name: str, label: str, tip: str, action) -> Gtk.Button:
+        btn = Gtk.Button.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON)
+        if not Gtk.IconTheme.get_default().has_icon(icon_name):
+            btn = Gtk.Button.new_with_label(label)
+        btn.set_tooltip_text(tip)
+        btn.get_accessible().set_name(label)
+        btn.connect(GtkSignal.CLICKED.value, lambda _b: action())
+        return btn
+
+    def _update_history_buttons(self) -> None:
+        self._undo_btn.set_sensitive(self._history.can_undo)
+        self._redo_btn.set_sensitive(self._history.can_redo)
+
+    def undo(self) -> None:
+        changes = self._history.undo()
+        if changes:
+            self._apply(changes)
+        self._update_history_buttons()
+
+    def redo(self) -> None:
+        changes = self._history.redo()
+        if changes:
+            self._apply(changes)
+        self._update_history_buttons()
+
+    def handle_key(self, event: Gdk.EventKey) -> bool:
+        """Undo/redo shortcuts; the hosting window forwards key presses here."""
+        mods = event.state & Gtk.accelerator_get_default_mod_mask()
+        key = Gdk.keyval_to_lower(event.keyval)
+        ctrl = Gdk.ModifierType.CONTROL_MASK
+        shift = Gdk.ModifierType.SHIFT_MASK
+        if mods == ctrl and key == Gdk.KEY_z:
+            self.undo()
+            return True
+        if (mods == ctrl | shift and key == Gdk.KEY_z) or (mods == ctrl and key == Gdk.KEY_y):
+            self.redo()
+            return True
+        return False
+
     def _on_canvas_paint(self, _canvas, delta: dict) -> None:
         if not delta:
             return
+        self._history.record(dict(self._sink.current), {int(z): int(c) for z, c in delta.items()})
+        self._update_history_buttons()
+        self._apply(delta)
+
+    def _apply(self, delta: dict) -> None:
+        self._canvas.update_colors(delta)
         if len(delta) == 1:
             zone, color = next(iter(delta.items()))
             self._sink.write_one(int(zone), int(color))
