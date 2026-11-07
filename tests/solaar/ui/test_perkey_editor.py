@@ -156,3 +156,41 @@ def test_tool_hint_follows_active_tool():
     assert editor._tool_hint.get_text().startswith("Fill:")
     assert "unpainted" in editor._tool_hint.get_text()
     editor.shutdown()
+
+
+def test_apply_theme_replaces_map_and_is_one_undo_step(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    from solaar import perkey_themes
+
+    _Gtk, editor = _editor_or_skip()
+    sink = editor._sink
+    sink.colors.update({1: 0xFF0000, 3: 0x00FF00})
+
+    editor.apply_theme(perkey_themes.Theme(name="t", colors={2: 0x0000FF, 999: 0x123456}))
+    assert sink.colors == {1: UNSET, 2: 0x0000FF, 3: UNSET}
+
+    editor.undo()
+    assert sink.colors == {1: 0xFF0000, 2: UNSET, 3: 0x00FF00}
+    editor.shutdown()
+
+
+def test_save_export_import_from_editor(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    from solaar import perkey_themes
+
+    _Gtk, editor = _editor_or_skip()
+    editor._sink.colors.update({1: 0xABCDEF})
+
+    editor.save_current_as("Mine")
+    assert perkey_themes.load("Mine").colors == {1: 0xABCDEF}
+
+    exported = tmp_path / "Shared.json"
+    editor.export_current(exported)
+    perkey_themes.delete("Mine")
+    theme = editor.import_theme(exported)
+    assert theme.name == "Shared"
+    assert [t.name for t in perkey_themes.list_themes()] == ["Shared"]
+
+    editor.delete_theme("Shared")
+    assert perkey_themes.list_themes() == []
+    editor.shutdown()
