@@ -359,6 +359,30 @@ def test_perkey_has_paint_with_no_persister():
     assert has_paint is True
 
 
+class _FakePersisterWithValue(_FakePersister):
+    def __init__(self, saved):
+        super().__init__()
+        self._saved = saved
+
+    def get(self, name, default=None):
+        return self._saved.get(name, default)
+
+
+def test_perkey_has_paint_ignores_corrupt_in_memory_value():
+    pk = _FakePerKey("PLAY/PAUSE")
+    _, has_paint = rgb_power.perkey_has_paint(_FakeDevice([pk], _FakePersister()))
+    assert has_paint is False
+
+
+def test_perkey_has_paint_ignores_corrupt_saved_value():
+    # Regression: the post-claim repaint read a bare key name from the
+    # config and crashed calling .values() on it, aborting the zone repaint.
+    pk = _FakePerKey(None)
+    dev = _FakeDevice([pk], _FakePersisterWithValue({"per-key-lighting": "PLAY/PAUSE"}))
+    _, has_paint = rgb_power.perkey_has_paint(dev)
+    assert has_paint is False
+
+
 def test_zone_effect_is_static_true_for_static():
     z = _FakeZoneSetting("rgb_zone_1", _ValueWithID(0x01))
     assert rgb_power.zone_effect_is_static(_FakeDevice([z])) is True

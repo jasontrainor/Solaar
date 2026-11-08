@@ -120,7 +120,8 @@ def perkey_has_paint(device):
     persister = getattr(device, "persister", None)
     if value is None and persister is not None:
         value = persister.get("per-key-lighting")
-    if not value:
+    if not value or not isinstance(value, dict):
+        # A corrupt saved value (e.g. a bare key name) is not paint.
         return perkey, False
     no_change = special_keys.COLORSPLUS["No change"]
     if not any(c != no_change and isinstance(c, int) and c >= 0 for c in value.values()):
