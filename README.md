@@ -14,6 +14,53 @@ that are otherwise ignored by the Linux input system.
 <a href="https://pwr-solaar.github.io/Solaar/issues">Known Issues</a>
 
 
+## About this fork
+
+This is a personal fork of [pwr-Solaar/Solaar](https://github.com/pwr-Solaar/Solaar).
+The rest of this README describes upstream Solaar. On top of upstream, this fork adds:
+
+### Onboard profile button mapping (gaming mice)
+- **Button Mapping** setting (`onboard-buttons`) for devices with onboard profiles,
+  such as the G502 X PLUS. It changes what each button does in the active onboard profile:
+  mouse buttons, DPI Up/Down/Cycle/Default, **DPI Shift** (hold for the profile's shift DPI),
+  scroll, profile switching, G-Shift, modifier keys, or disabled.
+  Buttons are named after their factory action, and mappings set elsewhere (e.g. key combinations from G HUB) are kept.
+  The mapping is stored on the device, so it works at power-on without Solaar running.
+
+      solaar config "G502 X PLUS" onboard-buttons 4 Back
+
+- **LED Control keeps the onboard profile on.** Taking over the lighting used to switch the device to
+  host mode every time it connected, which turned off the onboard profile and its button mapping.
+  When Onboard Profiles is set to a profile, the device now stays in it.
+  (While a profile is active, the device may show the profile's lighting rather than Solaar's.)
+
+### Per-key lighting editor
+- **Color themes**: save, apply, import, export and delete named per-key themes from the editor's
+  Themes menu. Themes are JSON files in `~/.config/solaar/themes/`.
+- **`solaar theme` command**:
+
+      solaar theme list
+      solaar theme save <device> <name>
+      solaar theme apply <device> <name>
+      solaar theme delete <name>
+      solaar theme import <file>
+      solaar theme export <name> <file>
+
+- Undo/redo, readable key labels, and TKL keyboard layout detection.
+- A G915 X LIGHTSPEED TKL layout that includes its top bar (logo, brightness and media keys).
+- Brush, Rect and Fill tools are labeled, with a hint describing what the active tool will do.
+
+### Fixes
+- A query like `solaar config <device> per-key-lighting <KEY>` no longer wipes every saved key color.
+  A config already damaged this way no longer breaks the editor or LED Control at startup.
+- Per-key zone 69 is named PAUSE (Pause/Break) and zone 155 PLAY/PAUSE (the media key).
+  Previously they were PASTE and PAUSE.
+
+### Development
+- `make dev_venv` builds a local `.venv` that reuses the system GTK bindings and has the test and lint tools.
+  `make dev_test` and `make dev_lint` run pytest and ruff from it.
+
+
 [![codecov](https://codecov.io/gh/pwr-Solaar/Solaar/graph/badge.svg?token=D7YWFEWID6)](https://codecov.io/gh/pwr-Solaar/Solaar)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2+-blue.svg)](../LICENSE.txt)
 
