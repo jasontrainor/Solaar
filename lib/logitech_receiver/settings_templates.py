@@ -589,6 +589,232 @@ class OnboardProfiles(settings.Setting):
             return cls(choices=common.NamedInts.list(profiles_list), byte_count=2) if len(profiles_list) > 1 else None
 
 
+# Button actions in an onboard profile are 4 raw bytes, used here as a big-endian int.
+_BUTTON_FUNCTION_NAMES = {
+    hidpp20.ButtonFunctions.NO_ACTION: _("No Action"),
+    hidpp20.ButtonFunctions.TILT_LEFT: _("Scroll Left"),
+    hidpp20.ButtonFunctions.TILT_RIGHT: _("Scroll Right"),
+    hidpp20.ButtonFunctions.NEXT_DPI: _("DPI Up"),
+    hidpp20.ButtonFunctions.PREVIOUS_DPI: _("DPI Down"),
+    hidpp20.ButtonFunctions.CYCLE_DPI: _("DPI Cycle"),
+    hidpp20.ButtonFunctions.DEFAULT_DPI: _("DPI Default"),
+    hidpp20.ButtonFunctions.SHIFT_DPI: _("DPI Shift"),
+    hidpp20.ButtonFunctions.NEXT_PROFILE: _("Next Profile"),
+    hidpp20.ButtonFunctions.PREVIOUS_PROFILE: _("Previous Profile"),
+    hidpp20.ButtonFunctions.CYCLE_PROFILE: _("Profile Cycle"),
+    hidpp20.ButtonFunctions.G_SHIFT: _("G-Shift"),
+    hidpp20.ButtonFunctions.BATTERY_STATUS: _("Battery Status"),
+    hidpp20.ButtonFunctions.SCROLL_UP: _("Scroll Up"),
+    hidpp20.ButtonFunctions.SCROLL_DOWN: _("Scroll Down"),
+}
+_BUTTON_MOUSE_NAMES = {
+    0x0001: _("Left Click"),
+    0x0002: _("Right Click"),
+    0x0004: _("Middle Click"),
+    0x0008: _("Back"),
+    0x0010: _("Forward"),
+}
+_BUTTON_MODIFIER_NAMES = {0x01: "Ctrl", 0x02: "Shift", 0x04: "Alt", 0x08: "Super"}
+_BUTTON_UNMAPPED = 0xFFFFFFFF
+
+
+def _send_button(mask):
+    return (hidpp20.ButtonBehavior.SEND << 28) | (hidpp20.ButtonMappingType.BUTTON << 16) | mask
+
+
+def _send_key(modifiers, key):
+    return (hidpp20.ButtonBehavior.SEND << 28) | (hidpp20.ButtonMappingType.MODIFIER_AND_KEY << 16) | (modifiers << 8) | key
+
+
+def _function(fn):
+    # Logitech's own profiles leave the third byte 0x00, so do the same.
+    return (hidpp20.ButtonBehavior.FUNCTION << 28) | (fn << 16)
+
+
+_BUTTON_NO_ACTION = (hidpp20.ButtonBehavior.SEND << 28) | (hidpp20.ButtonMappingType.NO_ACTION << 16) | 0xFFFF
+
+
+def onboard_button_action_name(value: int) -> str:
+    """A readable name for a 4-byte onboard-profile button action."""
+    if value == _BUTTON_UNMAPPED:
+        return _("Not Mapped")
+    b = value.to_bytes(4, "big")
+    behavior = b[0] >> 4
+    if behavior == hidpp20.ButtonBehavior.SEND:
+        kind = b[1]
+        if kind == hidpp20.ButtonMappingType.NO_ACTION:
+            return _("Disabled")
+        if kind == hidpp20.ButtonMappingType.BUTTON:
+            mask = (b[2] << 8) | b[3]
+            if mask in _BUTTON_MOUSE_NAMES:
+                return _BUTTON_MOUSE_NAMES[mask]
+            if mask and mask & (mask - 1) == 0:
+                return _("Mouse Button %d") % mask.bit_length()
+            return _("Mouse Buttons %04X") % mask
+        if kind == hidpp20.ButtonMappingType.MODIFIER_AND_KEY:
+            mods = [n for bit, n in _BUTTON_MODIFIER_NAMES.items() if b[2] & bit]
+            if b[3]:
+                mods.append(str(hidpp20.ButtonKeys[b[3]]))
+            return "+".join(mods) if mods else _("No Key")
+        if kind == hidpp20.ButtonMappingType.CONSUMER_KEY:
+            return str(hidpp20.ButtonConsumerKeys[(b[2] << 8) | b[3]])
+    elif behavior == hidpp20.ButtonBehavior.FUNCTION:
+        try:
+            return _BUTTON_FUNCTION_NAMES.get(hidpp20.ButtonFunctions(b[1]), hidpp20.ButtonFunctions(b[1]).name)
+        except ValueError:
+            pass
+    elif behavior in (hidpp20.ButtonBehavior.MACRO_EXECUTE, hidpp20.ButtonBehavior.MACRO_STOP):
+        return _("Macro")
+    return _("Custom %08X") % value
+
+
+def _onboard_button_choices():
+    values = [_send_button(m) for m in _BUTTON_MOUSE_NAMES]
+    values += [_send_button(1 << i) for i in range(5, 8)]
+    values += [_function(f) for f in _BUTTON_FUNCTION_NAMES if f != hidpp20.ButtonFunctions.NO_ACTION]
+    values += [_send_key(bit, 0) for bit in _BUTTON_MODIFIER_NAMES]
+    values.append(_BUTTON_NO_ACTION)
+    return values
+
+
+def _normalize_button(raw: bytes) -> int:
+    value = common.bytes2int(raw)
+    if raw[0] >> 4 == hidpp20.ButtonBehavior.FUNCTION:
+        value &= 0xFFFF00FF  # the third byte is unused padding (0x00 or 0xFF)
+    return value
+
+
+def _onboard_target_sector(device):
+    """The profile sector whose buttons are edited: the active onboard profile, or if the
+    device is in host mode, the profile Solaar is set to select."""
+    mode = device.feature_request(_F.ONBOARD_PROFILES, 0x20)
+    if mode and mode[0] == 0x01:
+        active = device.feature_request(_F.ONBOARD_PROFILES, 0x40)
+        if active and active[:2] != b"\x00\x00":
+            return common.bytes2int(active[:2])
+    saved = device.persister.get(OnboardProfiles.name) if device.persister else None
+    if saved:
+        return int(saved)
+    profiles = device.profiles
+    if profiles:
+        enabled = [p.sector for p in profiles.profiles.values() if p.enabled]
+        if enabled:
+            return enabled[0]
+    return None
+
+
+def _onboard_profile_selected(device) -> bool:
+    """True when Solaar is set to run the device from one of its onboard profiles."""
+    persister = getattr(device, "persister", None)
+    return bool(persister and persister.get(OnboardProfiles.name))
+
+
+class OnboardButtons(settings.Settings):
+    name = "onboard-buttons"
+    label = _("Button Mapping")
+    description = (
+        _("Change what each button does in the onboard profile that is in use.")
+        + "\n"
+        + _("DPI Shift switches to the profile's shift DPI while the button is held.")
+        + "\n"
+        + _("Stored on the device, so it works without Solaar. Needs Onboard Profiles set to a profile.")
+        + "\n"
+        + _("Changing important buttons (such as the left mouse button) can result in an unusable system.")
+    )
+    persist = False  # stored in the device's onboard profile
+    feature = _F.ONBOARD_PROFILES
+    keys_universe = common.NamedInts()
+    choices_universe = common.NamedInts()
+
+    class rw_class:
+        def __init__(self, feature):
+            self.feature = feature
+            self.kind = settings.FeatureRW.kind
+            self._cache = None  # (time, sector bytes): a full read asks for every button at once
+
+        def read(self, device, key):
+            if self._cache and time() - self._cache[0] < 2.0:
+                raw = self._cache[1]
+            else:
+                sector = _onboard_target_sector(device)
+                if sector is None:
+                    return None
+                raw = hidpp20.OnboardProfiles.read_sector(device, sector, device.profiles.size)
+                self._cache = (time(), raw)
+            offset = 32 + (int(key) - 1) * 4
+            return b"\x00" + raw[offset : offset + 4]
+
+        def write(self, device, key, data_bytes):
+            self._cache = None
+            profiles = device.profiles
+            sector = _onboard_target_sector(device)
+            if sector is None or not profiles or sector >= profiles.sectors:
+                logger.warning("%s: no writable onboard profile to change button %s in", device, key)
+                return None
+            raw = bytearray(hidpp20.OnboardProfiles.read_sector(device, sector, profiles.size))
+            if common.crc16(bytes(raw[:-2])) != common.bytes2int(raw[-2:]):
+                logger.warning("%s: onboard profile sector %d has a bad checksum, not changing it", device, sector)
+                return None
+            offset = 32 + (int(key) - 1) * 4
+            raw[offset : offset + 4] = data_bytes
+            raw[-2:] = common.int2bytes(common.crc16(bytes(raw[:-2])), 2)
+            hidpp20.OnboardProfiles.write_sector(device, sector, bytes(raw))
+            for p in profiles.profiles.values():  # keep the cached copy in step
+                if p.sector == sector:
+                    p.buttons[int(key) - 1] = hidpp20.Button.from_bytes(data_bytes)
+            mode = device.feature_request(_F.ONBOARD_PROFILES, 0x20)
+            if mode and mode[0] == 0x01:  # reload the edited profile if it is the active one
+                active = device.feature_request(_F.ONBOARD_PROFILES, 0x40)
+                if active and common.bytes2int(active[:2]) == sector:
+                    device.feature_request(_F.ONBOARD_PROFILES, 0x30, active[:2])
+            return True
+
+    class validator_class(settings_validator.ChoicesMapValidator):
+        @classmethod
+        def build(cls, setting_class, device):
+            profiles = device.profiles
+            if not profiles or not profiles.buttons:
+                return None
+            # name each button after its factory action, from the read-only ROM profile
+            defaults = {}
+            try:
+                rom = hidpp20.OnboardProfiles.read_sector(device, 0x0101, profiles.size)
+                if rom[:2] != b"\xff\xff":
+                    for i in range(profiles.buttons):
+                        defaults[i] = _normalize_button(rom[32 + i * 4 : 36 + i * 4])
+            except Exception as e:
+                logger.debug("%s: could not read ROM profile for button names: %s", device, e)
+            current = {}
+            for p in profiles.profiles.values():
+                for i, btn in enumerate(p.buttons):
+                    try:
+                        current.setdefault(i, set()).add(_normalize_button(btn.to_bytes()))
+                    except Exception:
+                        pass
+            base_values = _onboard_button_choices()
+            choices = {}
+            for i in range(profiles.buttons):
+                name = _("Button %d") % (i + 1)
+                if i in defaults:
+                    name += f" ({onboard_button_action_name(defaults[i])})"
+                key = common.NamedInt(i + 1, name)
+                values = list(base_values)
+                for extra in [defaults.get(i)] + sorted(current.get(i, ())):
+                    if extra is not None and extra not in values:
+                        values.append(extra)
+                choices[key] = common.NamedInts(**{})
+                for v in values:
+                    choices[key][v] = onboard_button_action_name(v)
+            return cls(choices, key_byte_count=1, byte_count=4)
+
+        def validate_read(self, reply_bytes, key):
+            value = _normalize_button(reply_bytes[1:5])
+            choices = self.choices[key]
+            if value not in choices:  # e.g. a key combination set elsewhere: offer it as a choice
+                choices[value] = onboard_button_action_name(value)
+            return value
+
+
 class ReportRate(settings.Setting):
     name = "report_rate"
     label = _("Report Rate")
@@ -3333,7 +3559,9 @@ class RGBControl(settings.Setting):
         # Disable firmware power management via profile management or onboard profiles
         if device.features and _F.PROFILE_MANAGEMENT in device.features:
             device.feature_request(_F.PROFILE_MANAGEMENT, 0x60, b"\x05")
-        elif device.features and _F.ONBOARD_PROFILES in device.features:
+        elif device.features and _F.ONBOARD_PROFILES in device.features and not _onboard_profile_selected(device):
+            # Host mode turns off the onboard profile, and with it the profile's button
+            # mapping (DPI shift etc.), so only take it when no profile is selected.
             device.feature_request(_F.ONBOARD_PROFILES, 0x10, b"\x02")
         # Claim LED pipeline: SetSWControl(mode=3, flags=5)
         device.feature_request(_F.RGB_EFFECTS, 0x50, rgb_power.SW_ACTIVE)
@@ -4461,6 +4689,7 @@ SETTINGS: list[settings.Setting] = [
     ThumbInvert,  # working
     ThumbMode,  # working
     OnboardProfiles,
+    OnboardButtons,
     ReportRate,  # working
     ExtendedReportRate,
     PointerSpeed,  # simple
