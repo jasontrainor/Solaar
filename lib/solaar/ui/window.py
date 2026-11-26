@@ -320,23 +320,9 @@ def _create_window_layout():
     panel.pack_start(_info, True, True, 0)
     panel.pack_start(_empty, True, True, 0)
 
-    bottom_buttons_box = Gtk.HButtonBox()
-    bottom_buttons_box.set_layout(Gtk.ButtonBoxStyle.START)
-    bottom_buttons_box.set_spacing(20)
-    quit_button = _new_button(_("Quit %s") % NAME, "application-exit", _SMALL_BUTTON_ICON_SIZE, clicked=destroy)
-    bottom_buttons_box.add(quit_button)
-    about_button = _new_button(_("About %s") % NAME, "help-about", _SMALL_BUTTON_ICON_SIZE, clicked=about.show)
-    bottom_buttons_box.add(about_button)
-    diversion_button = _new_button(
-        _("Rule Editor"), "", _SMALL_BUTTON_ICON_SIZE, clicked=lambda *_trigger: diversion_rules.show_window(_model)
-    )
-    bottom_buttons_box.add(diversion_button)
-    bottom_buttons_box.set_child_secondary(diversion_button, True)
-
     vbox = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
     vbox.set_border_width(8)
     vbox.pack_start(panel, True, True, 0)
-    vbox.pack_end(bottom_buttons_box, False, False, 0)
     vbox.show_all()
 
     _details.set_visible(False)
@@ -344,11 +330,41 @@ def _create_window_layout():
     return vbox
 
 
+def _create_header_bar():
+    """Title bar holding the window-wide actions: Rule Editor, About and Quit."""
+    header = Gtk.HeaderBar()
+    header.set_title(NAME)
+    header.set_show_close_button(True)
+
+    menu = Gtk.Menu()
+    for label, handler in (
+        (_("About %s") % NAME, lambda *_a: about.show()),
+        (_("Quit %s") % NAME, lambda *_a: destroy()),
+    ):
+        item = Gtk.MenuItem.new_with_label(label)
+        item.connect("activate", handler)
+        menu.append(item)
+    menu.show_all()
+    menu_button = Gtk.MenuButton()
+    menu_button.set_popup(menu)
+    menu_button.add(Gtk.Image.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.BUTTON))
+    menu_button.set_tooltip_text(_("Menu"))
+    header.pack_end(menu_button)
+
+    rules_button = _new_button(_("Rule Editor"), clicked=lambda *_trigger: diversion_rules.show_window(_model))
+    rules_button.set_tooltip_text(_("Open the rule editor"))
+    header.pack_end(rules_button)
+
+    header.show_all()
+    return header
+
+
 def _create(delete_action):
     window = Gtk.Window()
     window.set_title(NAME)
     window.set_role("status-window")
     window.connect(GtkSignal.DELETE_EVENT.value, delete_action)
+    window.set_titlebar(_create_header_bar())
 
     vbox = _create_window_layout()
     window.add(vbox)
