@@ -46,6 +46,13 @@ The rest of this README describes upstream Solaar. On top of upstream, this fork
       solaar theme import <file>
       solaar theme export <name> <file>
 
+- **Apply theme rule action**: rules can switch per-key themes, e.g. on a key press.
+  Pick *Apply theme* under Action in the Rule Editor, or in `rules.yaml`:
+
+      - Rule:
+        - Key: [Play/Pause, pressed]
+        - ApplyTheme: [G915 X LS TKL, Windows]   # or just `ApplyTheme: Windows` for the triggering device
+
 - Undo/redo, readable key labels, and TKL keyboard layout detection.
 - A G915 X LIGHTSPEED TKL layout that includes its top bar (logo, brightness and media keys).
 - Brush, Rect and Fill tools are labeled, with a hint describing what the active tool will do.

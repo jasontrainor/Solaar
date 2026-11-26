@@ -409,6 +409,7 @@ class ActionMenu:
                         (_("Mouse scroll"), diversion.MouseScroll, [0, 0]),
                         (_("Mouse click"), diversion.MouseClick, ["left", 1]),
                         (_("Set"), diversion.Set, [None, "", None]),
+                        (_("Apply theme"), diversion.ApplyTheme, [None, ""]),
                         (_("Execute"), diversion.Execute, [""]),
                         (_("Later"), diversion.Later, [1]),
                     ],
@@ -1843,6 +1844,86 @@ class SettingUI(_SettingWithValueUI, ConditionUI):
             _SettingWithValueUI._on_update(self, *_args)
 
 
+class ApplyThemeUI(ActionUI):
+    CLASS = diversion.ApplyTheme
+
+    def create_widgets(self):
+        self.widgets = {}
+        self.label = Gtk.Label(valign=Gtk.Align.CENTER, hexpand=True)
+        self.label.set_text(_("Apply a saved per-key lighting theme."))
+        self.widgets[self.label] = (0, 0, 5, 1)
+        lbl = Gtk.Label(label=_("Device"), halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, hexpand=True)
+        self.widgets[lbl] = (0, 1, 1, 1)
+        self.device_field = SmartComboBox(
+            [],
+            completion=True,
+            has_entry=True,
+            blank=_("Originating device"),
+            case_insensitive=True,
+            replace_with_default_name=True,
+        )
+        self.device_field.set_value("")
+        self.device_field.set_valign(Gtk.Align.CENTER)
+        self.device_field.set_size_request(400, 0)
+        self.device_field.connect(GtkSignal.CHANGED.value, self._on_update)
+        self.widgets[self.device_field] = (1, 1, 1, 1)
+        lbl = Gtk.Label(label=_("Theme"), halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER, hexpand=True)
+        self.widgets[lbl] = (0, 2, 1, 1)
+        self.theme_field = Gtk.ComboBoxText.new_with_entry()
+        self.theme_field.set_valign(Gtk.Align.CENTER)
+        self.theme_field.connect(GtkSignal.CHANGED.value, self._on_update)
+        self.widgets[self.theme_field] = (1, 2, 1, 1)
+
+    def _fill_themes(self, current):
+        from solaar import perkey_themes
+
+        try:
+            names = [t.name for t in perkey_themes.list_themes()]
+        except Exception:
+            names = []
+        if current and current not in names:
+            names.append(current)
+        self.theme_field.remove_all()
+        for name in names:
+            self.theme_field.append_text(name)
+        self.theme_field.get_child().set_text(current or "")
+
+    def show(self, component, editable):
+        super().show(component, editable)
+        with self.ignore_changes():
+            self._update_device_list()
+            same = not component.device
+            device = _all_devices[component.device]
+            self.device_field.set_value(device.id if device else "" if same else component.device or "")
+            self._fill_themes(component.theme)
+
+    def update_devices(self):
+        self._update_device_list()
+
+    def _update_device_list(self):
+        with self.ignore_changes():
+            self.device_field.set_all_values([(d.id, d.display_name, *d.identifiers[1:]) for d in _all_devices])
+
+    def collect_value(self):
+        device_str = self.device_field.get_value()
+        same = device_str in ["", _("Originating device")]
+        device = None if same else _all_devices[device_str]
+        device_value = device.id if device else None if same else device_str
+        return [device_value, self.theme_field.get_child().get_text().strip()]
+
+    @classmethod
+    def left_label(cls, component):
+        return _("Apply theme")
+
+    @classmethod
+    def right_label(cls, component):
+        if not component.device:
+            return shlex_quote(component.theme)
+        device = _all_devices[component.device]
+        name = device.display_name if device else component.device
+        return f"{shlex_quote(component.theme)} → {name}"
+
+
 COMPONENT_UI: dict[Any, RuleComponentUI] = {
     diversion.Rule: RuleUI,
     diversion.Not: NotUI,
@@ -1868,6 +1949,7 @@ COMPONENT_UI: dict[Any, RuleComponentUI] = {
     diversion.MouseClick: rule_actions.MouseClickUI,
     diversion.Execute: rule_actions.ExecuteUI,
     diversion.Set: SetUI,
+    diversion.ApplyTheme: ApplyThemeUI,
     # type(None): RuleComponentUI,  # placeholders for empty rule/And/Or
 }
 

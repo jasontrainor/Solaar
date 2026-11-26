@@ -1325,6 +1325,63 @@ class Set(Action):
         return {"Set": self.args[:]}
 
 
+class ApplyTheme(Action):
+    """Apply a saved per-key lighting theme (see `solaar theme`).
+
+    YAML: ``ApplyTheme: <theme>`` applies it to the device that triggered the
+    rule; ``ApplyTheme: [<device>, <theme>]`` applies it to the named device.
+    """
+
+    SETTING_NAME = "per-key-lighting"
+
+    def __init__(self, args, warn=True):
+        if isinstance(args, str):
+            args = [None, args]
+        if not (
+            isinstance(args, list)
+            and len(args) == 2
+            and (args[0] is None or isinstance(args[0], str))
+            and isinstance(args[1], str)
+        ):
+            if warn:
+                logger.warning("rule ApplyTheme argument not a theme name or [device, theme]: %s", args)
+            args = [None, ""]
+        self.device, self.theme = args
+
+    def __str__(self):
+        target = f" ({self.device})" if self.device else ""
+        return f"ApplyTheme: {self.theme}{target}"
+
+    def evaluate(self, feature, notification: HIDPPNotification, device, last_result):
+        from solaar import perkey_themes  # the theme files belong to the Solaar application
+
+        if not self.theme:
+            return None
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("ApplyTheme action: %s on %s", self.theme, self.device or "triggering device")
+        dev = device.find(self.device) if self.device else device
+        if dev is None:
+            logger.warning("ApplyTheme action: device %s is not known", self.device)
+            return None
+        setting = next((s for s in dev.settings if s.name == self.SETTING_NAME), None)
+        if setting is None:
+            logger.warning("ApplyTheme action: %s has no per-key lighting", dev.name)
+            return None
+        try:
+            theme = perkey_themes.load(self.theme)
+        except Exception as e:
+            logger.warning("ApplyTheme action: cannot load theme %s: %s", self.theme, e)
+            return None
+        full = theme.full_map(int(k) for k in setting.choices)
+        setting.write(full)
+        if dev.setting_callback:
+            dev.setting_callback(dev, type(setting), [full])
+        return None
+
+    def data(self):
+        return {"ApplyTheme": self.theme if self.device is None else [self.device, self.theme]}
+
+
 class Execute(Action):
     def __init__(self, args, warn=True):
         if isinstance(args, str):
@@ -1407,6 +1464,7 @@ COMPONENTS = {
     "MouseScroll": MouseScroll,
     "MouseClick": MouseClick,
     "Set": Set,
+    "ApplyTheme": ApplyTheme,
     "Execute": Execute,
     "Later": Later,
 }
