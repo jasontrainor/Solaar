@@ -873,6 +873,98 @@ _SW_CONTROL_DEPENDENT_PREFIXES = ("rgb_zone_",)
 _HEADSET_LED_DEPENDENT_NAMES = ("headset_per_zone_lighting", "headset-onboard-effect")
 
 
+# "When not in use" quick picks: one choice sets Idle after, When idle and
+# Lights off after together.  None leaves the idle effect as it is.
+_IDLE_PRESET_SETTINGS = ("rgb_idle_timeout", "rgb_idle_effect", "rgb_sleep_timeout")
+_IDLE_DIM = (0x80, 50)  # Dim to 50%
+_IDLE_PRESETS = (
+    ("on", _("Always on"), {"rgb_idle_timeout": 0, "rgb_idle_effect": None, "rgb_sleep_timeout": 0}),
+    ("dim", _("Dim when idle"), {"rgb_idle_timeout": 60, "rgb_idle_effect": _IDLE_DIM, "rgb_sleep_timeout": 0}),
+    ("dim-off", _("Dim, then off"), {"rgb_idle_timeout": 60, "rgb_idle_effect": _IDLE_DIM, "rgb_sleep_timeout": 600}),
+    ("off", _("Off when idle"), {"rgb_idle_timeout": 0, "rgb_idle_effect": None, "rgb_sleep_timeout": 300}),
+)
+_IDLE_CUSTOM = "custom"
+
+
+def _idle_value(device, name):
+    """Current value of an idle setting: int seconds for the timeouts, or
+    (effect ID, intensity) for the idle effect.  None when unknown."""
+    value = None
+    for s in getattr(device, "settings", []) or []:
+        if s.name == name:
+            value = s._value
+            break
+    if value is None and getattr(device, "persister", None) is not None:
+        value = device.persister.get(name)
+    if value is None:
+        return None
+    if name == "rgb_idle_effect":
+        ident = getattr(value, "ID", None)
+        if ident is None:
+            return None
+        return (int(ident), int(getattr(value, "intensity", 0) or 0) if int(ident) == 0x80 else None)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _matching_idle_preset(device):
+    for key, _label, values in _IDLE_PRESETS:
+        if all(want is None or _idle_value(device, name) == want for name, want in values.items()):
+            return key
+    return _IDLE_CUSTOM
+
+
+def _create_idle_presets_row(device):
+    row = Gtk.HBox(homogeneous=False, spacing=6)
+    row.set_tooltip_text(_("Set Idle after, When idle and Lights off after in one go."))
+    row.pack_start(Gtk.Label(label=_("When not in use")), False, False, 0)
+    combo = Gtk.ComboBoxText(halign=Gtk.Align.FILL)
+    for key, label, _values in _IDLE_PRESETS:
+        combo.append(key, label)
+    combo.append(_IDLE_CUSTOM, _("Custom"))
+    row.pack_end(Gtk.Box(), False, False, 14)  # line up with the menu buttons of the rows below
+    row.pack_end(combo, False, False, 0)
+    row._combo = combo
+    row._syncing = False
+    combo.connect(GtkSignal.CHANGED.value, _idle_preset_chosen, row, device)
+    row.show_all()
+    return row
+
+
+def _idle_preset_chosen(combo, row, device):
+    if row._syncing:
+        return
+    key = combo.get_active_id()
+    values = next((v for k, _label, v in _IDLE_PRESETS if k == key), None)
+    if values is None:
+        return
+    device_id = (device.receiver.path if device.receiver else device.path, device.number)
+    # write the timeouts before the effect, so the effect row isn't gated off
+    for name in ("rgb_sleep_timeout", "rgb_idle_timeout", "rgb_idle_effect"):
+        want = values.get(name)
+        setting = next((s for s in device.settings if s.name == name), None)
+        if want is None or setting is None:
+            continue
+        if name == "rgb_idle_effect":
+            value = hidpp20.LEDEffectSetting(ID=want[0], intensity=want[1])
+        else:
+            value = next((c for c in setting.choices if int(c) == want), want)
+        _write_async(setting, value, _items.get((device_id[0], device_id[1], name)))
+
+
+def _refresh_idle_presets(device):
+    device_id = (device.receiver.path if device.receiver else device.path, device.number)
+    row = _items.get((device_id[0], device_id[1], "_idle_presets"))
+    if row is None:
+        return
+    row._syncing = True
+    row._combo.set_active_id(_matching_idle_preset(device))
+    row._syncing = False
+    row._combo.set_sensitive(not _sw_control_blocked(device))
+
+
 def _sw_control_blocked(device):
     """True when LED Control is not Solaar. Reads from setting._value first,
     then the persister, so the gate is right at panel load before live reads
@@ -965,6 +1057,8 @@ def _gate_blocks(device, name):
     """Single source of truth for "is this setting's row gated off?". Used by
     `_apply_rgb_gates` to grey rows and by `_update_setting_item` so async-read
     completions can't undo the grey-out when their callbacks land later."""
+    if name == "rgb_idle_effect":
+        return _sw_control_blocked(device) or _idle_value(device, "rgb_idle_timeout") == 0
     if name in _SW_CONTROL_DEPENDENT_NAMES or any(name.startswith(p) for p in _SW_CONTROL_DEPENDENT_PREFIXES):
         return _sw_control_blocked(device)
     if name == "per-key-lighting":
@@ -995,6 +1089,7 @@ def _apply_rgb_gates(device):
             or name in _HEADSET_LED_DEPENDENT_NAMES
         ):
             _set_row_sensitive(device, name, not _gate_blocks(device, name))
+    _refresh_idle_presets(device)
 
 
 def _set_allowable(sbox, new_allowed):
@@ -1155,8 +1250,12 @@ def _update_setting_item(sbox, value, is_online=True, sensitive=True, null_okay=
     _change_icon(sensitive, sbox._change_icon)
     # rgb_control / rgb_zone_* gate per-key; headset_led_control and the
     # headset-onboard-effect gate the per-zone row — re-evaluate on a change.
-    if name in ("rgb_control", "headset_led_control", "headset-onboard-effect") or name.startswith("rgb_zone_"):
+    if name in ("rgb_control", "rgb_idle_timeout", "headset_led_control", "headset-onboard-effect") or name.startswith(
+        "rgb_zone_"
+    ):
         _apply_rgb_gates(sbox.setting._device)
+    if name in _IDLE_PRESET_SETTINGS:
+        _refresh_idle_presets(sbox.setting._device)
 
 
 def _disable_listbox_highlight_bg(lb):
@@ -1374,7 +1473,12 @@ def update(device, is_online=None):
             if sbox is None:
                 continue
             _items[k] = sbox
-            _group_for(device, device_id, setting_group(s.name))._inner.pack_start(sbox, False, False, 0)
+            group_box = _group_for(device, device_id, setting_group(s.name))._inner
+            if s.name == "rgb_idle_timeout":
+                presets = _create_idle_presets_row(device)
+                _items[(device_id[0], device_id[1], "_idle_presets")] = presets
+                group_box.pack_start(presets, False, False, 0)
+            group_box.pack_start(sbox, False, False, 0)
         sensitive = device.persister.get_sensitivity(s.name) if device.persister else True
         _read_async(s, False, sbox, is_online, sensitive)
 

@@ -434,7 +434,7 @@ class RGBPowerManager:
         self._cancel_sleep_timer()
         if seconds == 0 and self._state in (self.DIMMING, self.IDLE):
             self._wake()
-        self._write_firmware_idle_timeout(seconds)
+        self._write_firmware_idle_timeout(self._firmware_idle_seconds())
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("%s: RGB idle timeout set to %ss", self._device, seconds)
 
@@ -444,8 +444,16 @@ class RGBPowerManager:
         self._cancel_sleep_timer()
         if seconds == 0 and self._state == self.SLEEPING:
             self._wake()
+        if self._idle_timeout == 0:  # the firmware's idle event is the sleep trigger
+            self._write_firmware_idle_timeout(self._firmware_idle_seconds())
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("%s: RGB sleep timeout set to %ss", self._device, seconds)
+
+    def _firmware_idle_seconds(self):
+        """When the firmware should report the device idle. Sleep is scheduled
+        from that event, so with no idle effect ("Never") the event is moved
+        to the sleep time; otherwise turning idle off would also stop sleep."""
+        return self._idle_timeout if self._idle_timeout > 0 else self._sleep_timeout
 
     def set_idle_effect(self, effect):
         """`effect` is an LEDEffectSetting. Wake immediately if the user
@@ -501,7 +509,7 @@ class RGBPowerManager:
             # the user value to firmware, see start()).
             sleep_enabled = self._sleep_timeout > 0
             if sleep_enabled:
-                delay = max(self._sleep_timeout - self._idle_timeout, 0)
+                delay = max(self._sleep_timeout - self._firmware_idle_seconds(), 0)
                 if delay == 0:
                     self._start_sleep()
                 else:

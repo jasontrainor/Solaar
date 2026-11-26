@@ -735,3 +735,37 @@ def test_rgb_control_off_falls_back_to_persister():
 
     dev = _SettingsPropertyExplodes(settings_list=None, persister={})
     assert rgb_power._rgb_control_off(dev) is False
+
+
+class _TimerDevice:
+    """Records the 0x8071 fn7 timer writes an RGBPowerManager makes."""
+
+    def __init__(self):
+        self.online = True
+        self.persister = None
+        self.writes = []
+
+    def feature_request(self, feature, function, *args):
+        if function == 0x70 and args and args[0][:1] == b"\x01":
+            payload = args[0]
+            self.writes.append(((payload[3] << 8) | payload[4], (payload[5] << 8) | payload[6]))
+        return None
+
+
+def test_idle_never_moves_firmware_idle_event_to_sleep_time():
+    dev = _TimerDevice()
+    mgr = rgb_power.RGBPowerManager(dev)
+    mgr.set_sleep_timeout(300)
+    mgr.set_idle_timeout(0)
+    # sleep is scheduled from the firmware's idle event, so it must still fire
+    assert dev.writes[-1] == (300, 300)
+    mgr.set_sleep_timeout(600)
+    assert dev.writes[-1] == (600, 600)
+
+
+def test_idle_set_keeps_its_own_firmware_time():
+    dev = _TimerDevice()
+    mgr = rgb_power.RGBPowerManager(dev)
+    mgr.set_sleep_timeout(600)
+    mgr.set_idle_timeout(60)
+    assert dev.writes[-1] == (60, 600)

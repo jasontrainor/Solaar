@@ -3621,14 +3621,30 @@ class RGBControl(settings.Setting):
                 device.cleanups.remove(rgb_power.cleanup)
 
 
+def _saved_int(device, name, default):
+    """A setting's saved integer value, for settings Solaar runs itself."""
+    persister = getattr(device, "persister", None)
+    value = persister.get(name) if persister else None
+    try:
+        return int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
 class RGBIdleTimeout(settings.Setting):
     name = "rgb_idle_timeout"
-    label = _("Idle Timeout")
-    description = _("Time without input before LED idle effect starts.") + "\n" + _("LED Control needs to be enabled.")
+    label = _("Idle after")
+    description = (
+        _("Time without input before the When idle effect starts.")
+        + "\n"
+        + _("Never: no idle effect; Lights off after still applies.")
+        + "\n"
+        + _("LED Control needs to be enabled.")
+    )
     feature = _F.RGB_EFFECTS
     choices_universe = common.NamedInts(
         **{
-            "Disabled": 0,
+            "Never": 0,
             "15 Seconds": 15,
             "30 Seconds": 30,
             "1 Minute": 60,
@@ -3645,7 +3661,9 @@ class RGBIdleTimeout(settings.Setting):
             self.kind = settings.FeatureRW.kind
 
         def read(self, device):
-            return common.int2bytes(60, 2)  # default 1 minute
+            # Solaar runs the idle timer, so the device has nothing to report:
+            # show the saved value, or the default of 1 minute.
+            return common.int2bytes(_saved_int(device, "rgb_idle_timeout", 60), 2)
 
         def write(self, device, data_bytes):
             timeout = int.from_bytes(data_bytes, byteorder="big")
@@ -3660,9 +3678,9 @@ class RGBIdleEffect(settings.Setting):
     LEDEffectSetting; legacy bare-int values are migrated in `_pre_read`."""
 
     name = "rgb_idle_effect"
-    label = _("Idle Effect")
+    label = _("When idle")
     description = (
-        _("What happens to LEDs when idle — dim to a percentage, change the base color, or play an animation.")
+        _("What the LEDs do after Idle after: dim to a percentage, change color, play an animation, or no change.")
         + "\n"
         + _("LED Control needs to be enabled.")
     )
@@ -3683,6 +3701,11 @@ class RGBIdleEffect(settings.Setting):
             self.kind = settings.FeatureRW.kind
 
         def read(self, device):
+            # Solaar runs the idle effect, so show the saved one (default Dim 50%).
+            persister = getattr(device, "persister", None)
+            saved = persister.get("rgb_idle_effect") if persister else None
+            if isinstance(saved, hidpp20.LEDEffectSetting):
+                return saved.to_bytes()
             return hidpp20.LEDEffectSetting(ID=0x80, intensity=50).to_bytes()
 
         def write(self, device, data_bytes):
@@ -3770,12 +3793,12 @@ class RGBIdleEffect(settings.Setting):
 
 class RGBSleepTimeout(settings.Setting):
     name = "rgb_sleep_timeout"
-    label = _("Sleep Timeout")
-    description = _("Time without input before LEDs fade off completely.") + "\n" + _("LED Control needs to be enabled.")
+    label = _("Lights off after")
+    description = _("Time without input before the LEDs fade off completely.") + "\n" + _("LED Control needs to be enabled.")
     feature = _F.RGB_EFFECTS
     choices_universe = common.NamedInts(
         **{
-            "Disabled": 0,
+            "Never": 0,
             "2 Minutes": 120,
             "5 Minutes": 300,
             "10 Minutes": 600,
@@ -3792,7 +3815,7 @@ class RGBSleepTimeout(settings.Setting):
             self.kind = settings.FeatureRW.kind
 
         def read(self, device):
-            return common.int2bytes(300, 2)  # default 5 minutes
+            return common.int2bytes(_saved_int(device, "rgb_sleep_timeout", 300), 2)  # default 5 minutes
 
         def write(self, device, data_bytes):
             timeout = int.from_bytes(data_bytes, byteorder="big")
@@ -4709,8 +4732,8 @@ SETTINGS: list[settings.Setting] = [
     RGBEffectSetting,
     PerKeyLighting,
     BrightnessControl,
+    RGBIdleTimeout,  # shown in this order: idle after, when idle, lights off after
     RGBIdleEffect,
-    RGBIdleTimeout,
     RGBSleepTimeout,
     RgbStartupAnimation,
     RgbShutdownAnimation,
