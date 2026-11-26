@@ -21,9 +21,14 @@ def test_presets_match_current_values():
     assert config_panel._matching_idle_preset(_device(0, DIM50, 300)) == "off"
 
 
-def test_other_values_are_custom():
-    assert config_panel._matching_idle_preset(_device(60, NO_CHANGE, 600)) == "custom"
-    assert config_panel._matching_idle_preset(_device(60, hidpp20.LEDEffectSetting(ID=0x80, intensity=25), 0)) == "custom"
+def test_presets_are_recognised_by_what_they_do():
+    assert config_panel._matching_idle_preset(_device(60, NO_CHANGE, 600)) == "off"
+    assert config_panel._matching_idle_preset(_device(30, NO_CHANGE, 0)) == "on"
+    assert config_panel._matching_idle_preset(_device(120, hidpp20.LEDEffectSetting(ID=0x80, intensity=25), 0)) == "dim"
+
+
+def test_other_effects_are_custom():
+    assert config_panel._matching_idle_preset(_device(60, hidpp20.LEDEffectSetting(ID=0x01, color=0xFF0000), 600)) == "custom"
 
 
 def test_idle_effect_gated_when_idle_is_never():

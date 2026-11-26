@@ -910,9 +910,19 @@ def _idle_value(device, name):
 
 
 def _matching_idle_preset(device):
-    for key, _label, values in _IDLE_PRESETS:
-        if all(want is None or _idle_value(device, name) == want for name, want in values.items()):
-            return key
+    """The preset describing what the current values do, whatever the times:
+    e.g. no idle effect and lights off after 10 minutes is "Off when idle"."""
+    idle = _idle_value(device, "rgb_idle_timeout")
+    effect = _idle_value(device, "rgb_idle_effect")
+    sleep = _idle_value(device, "rgb_sleep_timeout")
+    if idle is None or sleep is None:
+        return _IDLE_CUSTOM
+    no_effect = idle == 0 or (effect is not None and effect[0] == 0x00)
+    dims = idle > 0 and effect is not None and effect[0] == 0x80
+    if no_effect:
+        return "off" if sleep > 0 else "on"
+    if dims:
+        return "dim-off" if sleep > 0 else "dim"
     return _IDLE_CUSTOM
 
 
