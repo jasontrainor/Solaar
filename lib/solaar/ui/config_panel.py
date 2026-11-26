@@ -965,6 +965,24 @@ def _refresh_idle_presets(device):
     row._combo.set_sensitive(not _sw_control_blocked(device))
 
 
+_PROFILE_DEPENDENT_NAMES = ("host-buttons", "onboard-buttons")
+
+
+def _onboard_profile_in_use(device):
+    """True when Onboard Profiles is set to a profile, False when Disabled (host mode)."""
+    value = None
+    for s in getattr(device, "settings", []) or []:
+        if s.name == "onboard_profiles":
+            value = s._value
+            break
+    if value is None and getattr(device, "persister", None) is not None:
+        value = device.persister.get("onboard_profiles")
+    try:
+        return bool(value) and int(value) != 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _sw_control_blocked(device):
     """True when LED Control is not Solaar. Reads from setting._value first,
     then the persister, so the gate is right at panel load before live reads
@@ -1057,6 +1075,9 @@ def _gate_blocks(device, name):
     """Single source of truth for "is this setting's row gated off?". Used by
     `_apply_rgb_gates` to grey rows and by `_update_setting_item` so async-read
     completions can't undo the grey-out when their callbacks land later."""
+    if name in _PROFILE_DEPENDENT_NAMES:
+        # host-buttons works in host mode, onboard-buttons edits the profile in use
+        return _onboard_profile_in_use(device) == (name == "host-buttons")
     if name == "rgb_idle_effect":
         return _sw_control_blocked(device) or _idle_value(device, "rgb_idle_timeout") == 0
     if name in _SW_CONTROL_DEPENDENT_NAMES or any(name.startswith(p) for p in _SW_CONTROL_DEPENDENT_PREFIXES):
@@ -1087,6 +1108,7 @@ def _apply_rgb_gates(device):
             or any(name.startswith(p) for p in _SW_CONTROL_DEPENDENT_PREFIXES)
             or name == "per-key-lighting"
             or name in _HEADSET_LED_DEPENDENT_NAMES
+            or name in _PROFILE_DEPENDENT_NAMES
         ):
             _set_row_sensitive(device, name, not _gate_blocks(device, name))
     _refresh_idle_presets(device)
@@ -1250,9 +1272,13 @@ def _update_setting_item(sbox, value, is_online=True, sensitive=True, null_okay=
     _change_icon(sensitive, sbox._change_icon)
     # rgb_control / rgb_zone_* gate per-key; headset_led_control and the
     # headset-onboard-effect gate the per-zone row — re-evaluate on a change.
-    if name in ("rgb_control", "rgb_idle_timeout", "headset_led_control", "headset-onboard-effect") or name.startswith(
-        "rgb_zone_"
-    ):
+    if name in (
+        "rgb_control",
+        "rgb_idle_timeout",
+        "onboard_profiles",
+        "headset_led_control",
+        "headset-onboard-effect",
+    ) or name.startswith("rgb_zone_"):
         _apply_rgb_gates(sbox.setting._device)
     if name in _IDLE_PRESET_SETTINGS:
         _refresh_idle_presets(sbox.setting._device)
@@ -1332,6 +1358,7 @@ _GROUP_RULES = (
             "persistent-remappable-keys",
             "disable-keyboard-keys",
             "onboard-buttons",
+            "host-buttons",
             "force-sensing",
             "analog-button-tuning",
         },

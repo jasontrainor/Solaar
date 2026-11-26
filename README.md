@@ -19,16 +19,30 @@ that are otherwise ignored by the Linux input system.
 This is a personal fork of [pwr-Solaar/Solaar](https://github.com/pwr-Solaar/Solaar).
 The rest of this README describes upstream Solaar. On top of upstream, this fork adds:
 
-### Onboard profile button mapping (gaming mice)
-- **Button Mapping** setting (`onboard-buttons`) for devices with onboard profiles,
-  such as the G502 X PLUS. It changes what each button does in the active onboard profile:
-  mouse buttons, DPI Up/Down/Cycle/Default, **DPI Shift** (hold for the profile's shift DPI),
-  scroll, profile switching, G-Shift, modifier keys, or disabled.
-  Buttons are named after their factory action, and mappings set elsewhere (e.g. key combinations from G HUB) are kept.
-  The mapping is stored on the device, so it works at power-on without Solaar running.
+### Button mapping for gaming mice (G502 X PLUS and others)
+- **Button Mapping without onboard profiles** (`host-buttons`). Set Onboard Profiles to Disabled
+  and Solaar runs the mouse itself: DPI, report rate, lighting and the buttons all come from
+  Solaar's settings, so nothing in a profile can override them.
+  - Uses the mouse's MOUSE BUTTON SPY feature (0x8110). Remapping to another mouse button is done
+    by the mouse itself. DPI Up/Down/Cycle/Default, **DPI Shift** (held), and Scroll Left/Right
+    (wheel tilt) are done by Solaar, so they need Solaar running.
+  - **Default** does what the button does in an onboard profile: on the G502 X PLUS the DPI buttons
+    step through the profile's DPI levels, the sniper button holds its shift DPI, and the wheel
+    tilt scrolls sideways. The DPI levels are taken from the onboard profile Solaar last used.
+  - The mouse forgets the mapping when it loses power. Solaar re-applies it whenever the mouse
+    connects.
+
+      solaar config "G502 X PLUS" onboard_profiles Disabled
+      solaar config "G502 X PLUS" host-buttons 4 Forward
+
+- **Onboard Button Mapping** (`onboard-buttons`) changes the buttons stored in the active onboard
+  profile instead, so they work at power-on without Solaar: mouse buttons, DPI Up/Down/Cycle/Default,
+  DPI Shift, scroll, profile switching, G-Shift, modifier keys, or disabled. Buttons are named after
+  their factory action, and mappings set elsewhere (e.g. key combinations from G HUB) are kept.
 
       solaar config "G502 X PLUS" onboard-buttons 4 Back
 
+  Only one of the two is active at a time. The other is greyed out, depending on Onboard Profiles.
 - **LED Control keeps the onboard profile on.** Taking over the lighting used to switch the device to
   host mode every time it connected, which turned off the onboard profile and its button mapping.
   When Onboard Profiles is set to a profile, the device now stays in it.

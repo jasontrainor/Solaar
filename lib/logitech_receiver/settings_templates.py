@@ -575,6 +575,10 @@ class OnboardProfiles(settings.Setting):
                 device.feature_request(_F.ONBOARD_PROFILES, 0x10, b"\x01")
                 result = device.feature_request(_F.ONBOARD_PROFILES, 0x30, data_bytes)
                 profile_change(device, common.bytes2int(data_bytes))
+            # host-mode button mapping is only in force without a profile
+            host_buttons = next((s for s in getattr(device, "settings", []) if s.name == HostButtons.name), None)
+            if host_buttons is not None:
+                host_buttons.resync()
             return result
 
     class validator_class(settings_validator.ChoicesValidator):
@@ -711,7 +715,7 @@ def _onboard_profile_selected(device) -> bool:
 
 class OnboardButtons(settings.Settings):
     name = "onboard-buttons"
-    label = _("Button Mapping")
+    label = _("Onboard Button Mapping")
     description = (
         _("Change what each button does in the onboard profile that is in use.")
         + "\n"
@@ -813,6 +817,347 @@ class OnboardButtons(settings.Settings):
             if value not in choices:  # e.g. a key combination set elsewhere: offer it as a choice
                 choices[value] = onboard_button_action_name(value)
             return value
+
+
+def _factory_button_actions(device):
+    """Each button's factory action (a 4-byte onboard button value) by 0-based
+    index, from the device's read-only ROM onboard profile.  Empty if none."""
+    actions = {}
+    profiles = getattr(device, "profiles", None) if device.features and _F.ONBOARD_PROFILES in device.features else None
+    if not profiles or not profiles.buttons:
+        return actions
+    try:
+        rom = hidpp20.OnboardProfiles.read_sector(device, 0x0101, profiles.size)
+        if rom[:2] != b"\xff\xff":
+            for i in range(profiles.buttons):
+                actions[i] = _normalize_button(rom[32 + i * 4 : 36 + i * 4])
+    except Exception as e:
+        logger.debug("%s: could not read ROM profile for button names: %s", device, e)
+    return actions
+
+
+def _device_in_host_mode(device):
+    """True unless the device is running from an onboard profile."""
+    if not (device.features and _F.ONBOARD_PROFILES in device.features):
+        return True
+    mode = device.feature_request(_F.ONBOARD_PROFILES, 0x20)
+    return not (mode and mode[0] == 0x01)
+
+
+# Host-mode button actions (HostButtons).  1..5 are native HID buttons that
+# the mouse sends itself; the rest are done by Solaar from MOUSE BUTTON SPY
+# events while the button is silenced.
+HOST_BUTTON_DEFAULT = 0
+HOST_BUTTON_DISABLED = 0x100
+HOST_BUTTON_DPI_UP = 0x101
+HOST_BUTTON_DPI_DOWN = 0x102
+HOST_BUTTON_DPI_CYCLE = 0x103
+HOST_BUTTON_DPI_SHIFT = 0x104
+HOST_BUTTON_DPI_DEFAULT = 0x105
+HOST_BUTTON_SCROLL_LEFT = 0x106
+HOST_BUTTON_SCROLL_RIGHT = 0x107
+_HOST_BUTTON_CHOICES = common.NamedInts(
+    **{
+        _("Default"): HOST_BUTTON_DEFAULT,
+        _("Left Click"): 1,
+        _("Right Click"): 2,
+        _("Middle Click"): 3,
+        _("Back"): 4,
+        _("Forward"): 5,
+        _("Disabled"): HOST_BUTTON_DISABLED,
+        _("DPI Up"): HOST_BUTTON_DPI_UP,
+        _("DPI Down"): HOST_BUTTON_DPI_DOWN,
+        _("DPI Cycle"): HOST_BUTTON_DPI_CYCLE,
+        _("DPI Shift"): HOST_BUTTON_DPI_SHIFT,
+        _("DPI Default"): HOST_BUTTON_DPI_DEFAULT,
+        _("Scroll Left"): HOST_BUTTON_SCROLL_LEFT,
+        _("Scroll Right"): HOST_BUTTON_SCROLL_RIGHT,
+    }
+)
+# What "Default" does for each factory action: the onboard-mode behaviour.
+_HOST_DEFAULT_FOR_FACTORY = {
+    _function(hidpp20.ButtonFunctions.NEXT_DPI): HOST_BUTTON_DPI_UP,
+    _function(hidpp20.ButtonFunctions.PREVIOUS_DPI): HOST_BUTTON_DPI_DOWN,
+    _function(hidpp20.ButtonFunctions.CYCLE_DPI): HOST_BUTTON_DPI_CYCLE,
+    _function(hidpp20.ButtonFunctions.SHIFT_DPI): HOST_BUTTON_DPI_SHIFT,
+    _function(hidpp20.ButtonFunctions.DEFAULT_DPI): HOST_BUTTON_DPI_DEFAULT,
+    _function(hidpp20.ButtonFunctions.TILT_LEFT): HOST_BUTTON_SCROLL_LEFT,
+    _function(hidpp20.ButtonFunctions.TILT_RIGHT): HOST_BUTTON_SCROLL_RIGHT,
+}
+_HOST_SCROLL_DELAY_MS = 350  # held wheel tilt: first repeat after this
+_HOST_SCROLL_REPEAT_MS = 100  # then this often
+_HOST_DPI_FALLBACK = ([400, 800, 1600, 3200], 1600, 400)  # levels, default, shift
+_HOST_STOCK_KEY = "_host-buttons-stock"  # the mouse's own button table, saved before Solaar first changes it
+
+
+def host_button_dpi_levels(device):
+    """DPI levels, default DPI and shift DPI for the DPI button actions, taken
+    from the onboard profile Solaar last used (or the first enabled one), so
+    they match what the buttons did in onboard mode."""
+    profiles = getattr(device, "profiles", None) if device.features and _F.ONBOARD_PROFILES in device.features else None
+    if profiles and profiles.profiles:
+        saved = device.persister.get(OnboardProfiles.name) if getattr(device, "persister", None) else None
+        chosen = profiles.profiles.get(saved) if saved else None
+        if chosen is None:
+            chosen = next((p for p in profiles.profiles.values() if p.enabled), None)
+        if chosen is not None:
+            raw = list(chosen.resolutions)
+            levels = [r for r in raw if r not in (0, 0xFFFF)]
+            if levels:
+                default = raw[chosen.resolution_default_index] if chosen.resolution_default_index < len(raw) else levels[0]
+                shift = raw[chosen.resolution_shift_index] if chosen.resolution_shift_index < len(raw) else levels[0]
+                if default in (0, 0xFFFF):
+                    default = levels[0]
+                if shift in (0, 0xFFFF):
+                    shift = levels[0]
+                return levels, default, shift
+    return _HOST_DPI_FALLBACK
+
+
+class HostButtons(settings.Settings):
+    """Button mapping done by Solaar with the mouse in host mode (Onboard
+    Profiles = Disabled), using the MOUSE BUTTON SPY feature (0x8110):
+
+    - fn3/fn4 read and write the RAM table of which native HID button each
+      physical button sends (0 = nothing).  The table resets when the mouse
+      loses power, and is re-written whenever Solaar applies settings.
+    - fn1/fn2 start and stop spying: while on, the mouse reports the buttons
+      held as a 16-bit big-endian bitmask, bit 0 = button 1.
+
+    Remapping to another mouse button is done by the table.  DPI actions
+    silence the button in the table and act on the spy events.
+    """
+
+    name = "host-buttons"
+    label = _("Button Mapping")
+    description = (
+        _("Change what each button does, with Onboard Profiles set to Disabled.")
+        + "\n"
+        + _("Default does what the button does in an onboard profile, e.g. DPI Up or Scroll Left.")
+        + "\n"
+        + _("DPI and scroll actions use the DPI levels of your onboard profile and need Solaar running.")
+        + "\n"
+        + _("Changing important buttons (such as the left mouse button) can result in an unusable system.")
+    )
+    feature = _F.MOUSE_BUTTON_SPY
+    keys_universe = common.NamedInts()
+    choices_universe = _HOST_BUTTON_CHOICES
+
+    class rw_class:
+        def __init__(self, feature):
+            self.feature = feature
+            self.kind = settings.FeatureRW.kind
+
+        def read(self, device, key):
+            # The mapping is Solaar's, not the device's: report the saved choice.
+            saved = device.persister.get(HostButtons.name) if getattr(device, "persister", None) else None
+            value = (saved or {}).get(int(key), HOST_BUTTON_DEFAULT)
+            return common.int2bytes(int(key), 1) + common.int2bytes(int(value), 2)
+
+        def write(self, device, key, data_bytes):
+            return True  # HostButtons.write sends the whole table at once
+
+    class validator_class(settings_validator.ChoicesMapValidator):
+        @classmethod
+        def build(cls, setting_class, device):
+            reply = device.feature_request(_F.MOUSE_BUTTON_SPY, 0x00)
+            count = reply[0] if reply else 0
+            if not 0 < count <= 16:
+                return None
+            factory = _factory_button_actions(device)
+            choices = {}
+            for i in range(count):
+                name = _("Button %d") % (i + 1)
+                if i in factory:
+                    name += f" ({onboard_button_action_name(factory[i])})"
+                choices[common.NamedInt(i + 1, name)] = setting_class.choices_universe
+            validator = cls(choices, key_byte_count=1, byte_count=2)
+            validator.factory = factory
+            return validator
+
+    def __init__(self, device, rw, validator):
+        super().__init__(device, rw, validator)
+        self._held = 0  # bitmask of buttons held, from the last spy event
+        self._shift_restore = None  # DPI to go back to when DPI Shift is released
+        self._scroll_timers = {}  # slot -> GLib source repeating a held wheel tilt
+
+    def effective_action(self, slot):
+        """What button `slot` (1-based) does: its choice, with Default resolved
+        to the factory behaviour (HOST_BUTTON_DEFAULT = send its own button)."""
+        action = int((self._value or {}).get(slot, HOST_BUTTON_DEFAULT))
+        if action != HOST_BUTTON_DEFAULT:
+            return action
+        factory = getattr(self._validator, "factory", {}).get(slot - 1)
+        if factory is None:
+            return HOST_BUTTON_DEFAULT
+        if factory in _HOST_DEFAULT_FOR_FACTORY:
+            return _HOST_DEFAULT_FOR_FACTORY[factory]
+        b = factory.to_bytes(4, "big")
+        if b[0] >> 4 == hidpp20.ButtonBehavior.SEND and b[1] == hidpp20.ButtonMappingType.BUTTON:
+            return HOST_BUTTON_DEFAULT  # a mouse button: the mouse sends it itself
+        return HOST_BUTTON_DISABLED  # e.g. profile switching, which means nothing in host mode
+
+    def write(self, map, save=True):
+        if self._device.online:
+            self.update(map, save)
+            if not self._sync():
+                return None
+        return map
+
+    def write_key_value(self, key, value, save=True):
+        if self._device.online:
+            if not self._value:
+                self.read()
+            self.update_key_value(key, value, save)
+            if not self._sync():
+                return None
+        return value
+
+    # --- talking to the mouse ---
+
+    def _stock_table(self):
+        """The mouse's own button table.  Saved the first time, because once
+        Solaar has written the table, reading it back gives Solaar's version
+        until the mouse is power-cycled."""
+        device = self._device
+        persister = getattr(device, "persister", None)
+        saved = persister.get(_HOST_STOCK_KEY) if persister else None
+        if isinstance(saved, list) and len(saved) == 16:
+            return list(saved)
+        reply = device.feature_request(_F.MOUSE_BUTTON_SPY, 0x30)
+        if not reply or len(reply) < 16:
+            return None
+        table = list(reply[:16])
+        if persister is not None:
+            persister[_HOST_STOCK_KEY] = table
+        return table
+
+    def _sync(self):
+        """Write the button table for the current mapping and start or stop
+        spying.  Only in host mode: in an onboard profile the firmware does
+        the button actions itself, so the mouse gets its own table back."""
+        device = self._device
+        stock = self._stock_table()
+        if stock is None:
+            logger.warning("%s: cannot read the button table, button mapping not applied", device)
+            return False
+        table = list(stock)
+        spy = False
+        if _device_in_host_mode(device):
+            for key in self._validator.choices:
+                slot = int(key)
+                if not 1 <= slot <= 16:
+                    continue
+                action = self.effective_action(slot)
+                if action == HOST_BUTTON_DEFAULT:
+                    continue
+                if 1 <= action <= 5:
+                    table[slot - 1] = action
+                else:  # disabled, or done by Solaar
+                    table[slot - 1] = 0
+                    spy = spy or action != HOST_BUTTON_DISABLED
+        self._stop_scrolling()
+        device.feature_request(_F.MOUSE_BUTTON_SPY, 0x40, bytes(table))
+        if spy:
+            device.add_notification_handler(self.name, self._handle_notification)
+            device.feature_request(_F.MOUSE_BUTTON_SPY, 0x10)
+        else:
+            device.feature_request(_F.MOUSE_BUTTON_SPY, 0x20)
+            try:
+                device.remove_notification_handler(self.name)
+            except KeyError:
+                pass
+        self._held = 0
+        return True
+
+    def _handle_notification(self, device, n):
+        if n.sub_id >= 0x40 or n.address != 0x00:
+            return None
+        try:
+            if device.features.get_feature(n.sub_id) != _F.MOUSE_BUTTON_SPY:
+                return None
+        except IndexError:
+            return None
+        held = struct.unpack(">H", n.data[:2])[0]
+        changed, self._held = held ^ self._held, held
+        for slot in range(16):
+            bit = 1 << slot
+            if changed & bit:
+                action = self.effective_action(slot + 1)
+                if action in (HOST_BUTTON_SCROLL_LEFT, HOST_BUTTON_SCROLL_RIGHT):
+                    self._scroll_action(slot, -1 if action == HOST_BUTTON_SCROLL_LEFT else 1, bool(held & bit))
+                elif action > HOST_BUTTON_DISABLED:
+                    self._button_action(action, bool(held & bit))
+        return True
+
+    def resync(self):
+        """Re-apply the mapping, e.g. after Onboard Profiles changes."""
+        if self._device.online and self._value is not None:
+            self._sync()
+
+    # --- wheel tilt: sideways scrolling, repeated while held ---
+
+    def _scroll_action(self, slot, direction, pressed):
+        self._stop_scrolling(slot)
+        if not pressed:
+            return
+        diversion.simulate_scroll(direction, 0)
+
+        def repeat():
+            diversion.simulate_scroll(direction, 0)
+            return True
+
+        def start_repeat():
+            self._scroll_timers[slot] = diversion.GLib.timeout_add(_HOST_SCROLL_REPEAT_MS, repeat)
+            return False
+
+        self._scroll_timers[slot] = diversion.GLib.timeout_add(_HOST_SCROLL_DELAY_MS, start_repeat)
+
+    def _stop_scrolling(self, slot=None):
+        for s in [slot] if slot is not None else list(self._scroll_timers):
+            source = self._scroll_timers.pop(s, None)
+            if source is not None:
+                diversion.GLib.source_remove(source)
+
+    def _button_action(self, action, pressed):
+        device = self._device
+        dpi = next((s for s in device.settings if s.name in ("dpi", "dpi_extended")), None)
+        if dpi is None:
+            return
+        levels, default, shift = host_button_dpi_levels(device)
+        if action == HOST_BUTTON_DPI_SHIFT:
+            if pressed and self._shift_restore is None:
+                self._shift_restore = dpi.read()
+                dpi.write(_nearest_choice(dpi, shift), save=False)
+            elif not pressed and self._shift_restore is not None:
+                dpi.write(_nearest_choice(dpi, self._shift_restore), save=False)
+                self._shift_restore = None
+            return
+        if not pressed:
+            return
+        current = int(dpi.read() or default)
+        if action == HOST_BUTTON_DPI_UP:
+            target = next((lv for lv in levels if lv > current), levels[-1])
+        elif action == HOST_BUTTON_DPI_DOWN:
+            target = next((lv for lv in reversed(levels) if lv < current), levels[0])
+        elif action == HOST_BUTTON_DPI_CYCLE:
+            target = next((lv for lv in levels if lv > current), levels[0])
+        else:  # HOST_BUTTON_DPI_DEFAULT
+            target = default
+        value = _nearest_choice(dpi, target)
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("%s: button sets DPI %s", device, value)
+        dpi.write(value)
+        if device.setting_callback:
+            device.setting_callback(device, type(dpi), [value])
+
+
+def _nearest_choice(setting, value):
+    """The setting choice closest to `value` (for DPI, whose choices are a list)."""
+    choices = getattr(setting, "choices", None)
+    if not choices:
+        return value
+    return min(choices, key=lambda c: abs(int(c) - int(value)))
 
 
 class ReportRate(settings.Setting):
@@ -4713,6 +5058,7 @@ SETTINGS: list[settings.Setting] = [
     ThumbMode,  # working
     OnboardProfiles,
     OnboardButtons,
+    HostButtons,
     ReportRate,  # working
     ExtendedReportRate,
     PointerSpeed,  # simple
