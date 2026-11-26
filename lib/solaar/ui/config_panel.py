@@ -1126,6 +1126,10 @@ def create():
     config_scroll = Gtk.ScrolledWindow()
     config_scroll.add(_box)
     config_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    # An overlay scrollbar is drawn on top of the right-hand column of
+    # controls, hiding the buttons there.  Give it its own space instead.
+    config_scroll.set_overlay_scrolling(False)
+    _box.set_margin_end(6)
     config_scroll.set_shadow_type(Gtk.ShadowType.NONE)  # was IN
     config_scroll.set_size_request(0, 350)  # ask for enough vertical space for about eight settings
 
