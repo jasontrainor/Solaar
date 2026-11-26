@@ -71,6 +71,18 @@ The rest of this README describes upstream Solaar. On top of upstream, this fork
 - A G915 X LIGHTSPEED TKL layout that includes its top bar (logo, brightness and media keys).
 - Brush, Rect and Fill tools are labeled, with a hint describing what the active tool will do.
 
+### Main window
+- Settings are in collapsible groups: Pointer and Scrolling, Buttons and Keys, Lighting, Audio,
+  Device and Other. Folded groups are remembered per device.
+- Settings are editable straight away. The old three-state lock icon is now a small menu at the
+  end of each row with Editable, Locked and Ignored. Only locked and ignored rows show an icon.
+- Rule Editor, About and Quit are in a header bar instead of a row of buttons at the bottom.
+- Battery, link and light level sit on one line, and the device list is narrower.
+- The scrollbar no longer covers the controls at the right-hand edge.
+- **Idle lighting**: a *When not in use* choice (Always on, Dim when idle, Dim then off,
+  Off when idle) sets *Idle after*, *When idle* and *Lights off after* together. Lights off now
+  also works with Idle after set to Never.
+
 ### Fixes
 - A query like `solaar config <device> per-key-lighting <KEY>` no longer wipes every saved key color.
   A config already damaged this way no longer breaks the editor or LED Control at startup.
