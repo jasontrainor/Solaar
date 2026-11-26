@@ -800,17 +800,65 @@ class HeteroKeyControl(Gtk.HBox, Control):
             _write_async(self.sbox.setting, new_state, self.sbox)
 
 
-_allowables_icons = {True: "changes-allow", False: "changes-prevent", settings.SENSITIVITY_IGNORE: "dialog-error"}
-_allowables_tooltips = {
-    True: _("Changes allowed"),
-    False: _("No changes allowed"),
-    settings.SENSITIVITY_IGNORE: _("Ignore this setting"),
+# Each setting row ends in a small menu button that picks how Solaar treats it:
+# editable (the normal case, shown as a faint "more" icon), locked against
+# accidental changes, or ignored (Solaar neither shows nor applies its value).
+_ALLOWABLES = (True, False, settings.SENSITIVITY_IGNORE)
+_allowables_icons = {
+    True: "view-more-symbolic",
+    False: "changes-prevent-symbolic",
+    settings.SENSITIVITY_IGNORE: "action-unavailable-symbolic",
 }
-_next_allowable = {True: False, False: settings.SENSITIVITY_IGNORE, settings.SENSITIVITY_IGNORE: True}
-_icons_allowables = {v: k for k, v in _allowables_icons.items()}
+_allowables_tooltips = {
+    True: _("Editable. Click for options."),
+    False: _("Locked: changes are blocked. Click to change."),
+    settings.SENSITIVITY_IGNORE: _("Ignored: Solaar leaves this setting alone. Click to change."),
+}
+_allowables_menu_labels = {
+    True: (_("Editable"), _("Change this setting here")),
+    False: (_("Locked"), _("Keep the saved value; block accidental changes")),
+    settings.SENSITIVITY_IGNORE: (_("Ignored"), _("Don't apply the saved value when the device connects")),
+}
 
 
-# clicking on the lock icon changes from changeable to unchangeable to ignore
+def _create_change_menu(sbox):
+    """The menu button at the end of a setting row, with its icon and popover."""
+    icon = Gtk.Image()
+    button = Gtk.MenuButton()
+    button.set_relief(Gtk.ReliefStyle.NONE)
+    button.set_focus_on_click(False)
+    button.add(icon)
+    box = Gtk.VBox(homogeneous=False, spacing=2)
+    box.set_border_width(6)
+    radios = {}
+    group = None
+    for allowed in _ALLOWABLES:
+        title, detail = _allowables_menu_labels[allowed]
+        radio = Gtk.RadioButton.new_from_widget(group)
+        group = group or radio
+        label = Gtk.Label(xalign=0)
+        label.set_markup(f"{GLib.markup_escape_text(title)}\n<small>{GLib.markup_escape_text(detail)}</small>")
+        radio.add(label)
+        radio.connect("toggled", _change_menu_toggled, sbox, allowed)
+        box.pack_start(radio, False, False, 0)
+        radios[allowed] = radio
+    box.show_all()
+    popover = Gtk.Popover()
+    popover.add(box)
+    button.set_popover(popover)
+    icon._radios = radios
+    icon._button = button
+    return button, icon
+
+
+def _change_menu_toggled(radio, sbox, allowed):
+    icon = sbox._change_icon
+    if not radio.get_active() or getattr(icon, "_syncing", False) or getattr(icon, "_allowed", None) == allowed:
+        return
+    icon._button.get_popover().popdown()
+    _set_allowable(sbox, allowed)
+
+
 # Settings whose operation depends on LED Control being set to Solaar.
 # Zone settings (rgb_zone_*) are matched by prefix because their name carries
 # the zone index (rgb_zone_1, rgb_zone_2, ...).
@@ -949,12 +997,10 @@ def _apply_rgb_gates(device):
             _set_row_sensitive(device, name, not _gate_blocks(device, name))
 
 
-def _change_click(button, sbox):
-    icon = button.get_children()[0]
-    icon_name, _ = icon.get_icon_name()
-    allowed = _icons_allowables.get(icon_name, True)
-    new_allowed = _next_allowable[allowed]
-    sbox._control.set_sensitive(new_allowed is True)
+def _set_allowable(sbox, new_allowed):
+    icon = sbox._change_icon
+    allowed = getattr(icon, "_allowed", True)
+    sbox._control.set_sensitive(new_allowed is True and not _gate_blocks(sbox.setting._device, sbox.setting.name))
     _change_icon(new_allowed, icon)
     if sbox.setting._device.persister:  # remember the new setting sensitivity
         sbox.setting._device.persister.set_sensitivity(sbox.setting.name, new_allowed)
@@ -1003,8 +1049,20 @@ def _change_click(button, sbox):
 def _change_icon(allowed, icon):
     if allowed in _allowables_icons:
         icon._allowed = allowed
-        icon.set_from_icon_name(_allowables_icons[allowed], Gtk.IconSize.LARGE_TOOLBAR)
-        icon.set_tooltip_text(_allowables_tooltips[allowed])
+        icon.set_from_icon_name(_allowables_icons[allowed], Gtk.IconSize.SMALL_TOOLBAR)
+        # the normal, editable state stays in the background
+        icon.set_opacity(0.45 if allowed is True else 1.0)
+        button = getattr(icon, "_button", None)
+        if button is not None:
+            button.set_tooltip_text(_allowables_tooltips[allowed])
+            label = getattr(button, "_row_label", None)
+            if label is not None:
+                label.set_sensitive(allowed != settings.SENSITIVITY_IGNORE)
+        radios = getattr(icon, "_radios", None)
+        if radios:
+            icon._syncing = True
+            radios[allowed].set_active(True)
+            icon._syncing = False
 
 
 def _create_sbox(s, _device):
@@ -1024,14 +1082,10 @@ def _create_sbox(s, _device):
     failed = Gtk.Image.new_from_icon_name("dialog-warning", Gtk.IconSize.SMALL_TOOLBAR)
     failed.set_tooltip_text(_("Read/write operation failed."))
     sbox._failed = failed
-    change_icon = Gtk.Image.new_from_icon_name("changes-prevent", Gtk.IconSize.LARGE_TOOLBAR)
+    change, change_icon = _create_change_menu(sbox)
+    change._row_label = lbl
     sbox._change_icon = change_icon
-    _change_icon(False, change_icon)
-    change = Gtk.Button()
-    change.set_relief(Gtk.ReliefStyle.NONE)
-    change.add(change_icon)
-    change.set_sensitive(True)
-    change.connect(GtkSignal.CLICKED.value, _change_click, sbox)
+    _change_icon(True, change_icon)
 
     editor_path = getattr(s, "editor_class", None)
     if editor_path:

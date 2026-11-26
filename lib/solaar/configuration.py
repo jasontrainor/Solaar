@@ -200,7 +200,7 @@ class _DeviceEntry(dict):
             super().__setitem__(_KEY_UNIT_ID, unitId)
 
     def get_sensitivity(self, name):
-        return self.get(_KEY_SENSITIVE, {}).get(name, False)
+        return self.get(_KEY_SENSITIVE, {}).get(name, True)
 
     def set_sensitivity(self, name, value):
         sensitives = self.get(_KEY_SENSITIVE, {})
