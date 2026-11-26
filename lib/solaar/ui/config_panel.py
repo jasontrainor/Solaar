@@ -1112,9 +1112,166 @@ def _disable_listbox_highlight_bg(lb):
         child.override_background_color(Gtk.StateFlags.PRELIGHT, colour)
 
 
+# Settings are shown in collapsible groups, in this order.
+GROUP_POINTER = "pointer"
+GROUP_BUTTONS = "buttons"
+GROUP_LIGHTING = "lighting"
+GROUP_AUDIO = "audio"
+GROUP_DEVICE = "device"
+GROUP_OTHER = "other"
+_GROUP_ORDER = (GROUP_POINTER, GROUP_BUTTONS, GROUP_LIGHTING, GROUP_AUDIO, GROUP_DEVICE, GROUP_OTHER)
+_GROUP_LABELS = {
+    GROUP_POINTER: _("Pointer and Scrolling"),
+    GROUP_BUTTONS: _("Buttons and Keys"),
+    GROUP_LIGHTING: _("Lighting"),
+    GROUP_AUDIO: _("Audio"),
+    GROUP_DEVICE: _("Device"),
+    GROUP_OTHER: _("Other"),
+}
+# (group, exact names, name prefixes); the first match wins.
+_GROUP_RULES = (
+    (
+        GROUP_LIGHTING,
+        {
+            "per-key-lighting",
+            "brightness_control",
+            "m-key-leds",
+            "mr-key-led",
+            "headset_led_control",
+            "headset_per_zone_lighting",
+            "headset-onboard-effect",
+        },
+        ("backlight", "led_", "rgb_", "headset-signature-"),
+    ),
+    (
+        GROUP_DEVICE,
+        {
+            "onboard_profiles",
+            "change-host",
+            "hand-detection",
+            "adc_power_management",
+            "headset-auto-sleep",
+            "headset-eco-mode",
+            "multiplatform",
+        },
+        (),
+    ),
+    (GROUP_AUDIO, {"sidetone", "equalizer"}, ("headset-", "logivoice-")),
+    (
+        GROUP_POINTER,
+        {
+            "pointer_speed",
+            "speed-change",
+            "hi-res-scroll",
+            "lowres-scroll-mode",
+            "smooth-scroll",
+            "side-scroll",
+            "smart-shift",
+            "crown-smooth",
+        },
+        ("dpi", "hires-", "thumb-scroll-", "scroll-ratchet", "report_rate"),
+    ),
+    (
+        GROUP_BUTTONS,
+        {
+            "fn-swap",
+            "reprogrammable-keys",
+            "persistent-remappable-keys",
+            "disable-keyboard-keys",
+            "onboard-buttons",
+            "force-sensing",
+            "analog-button-tuning",
+        },
+        ("divert-", "gesture2-", "haptic-"),
+    ),
+)
+_KEY_COLLAPSED = "_collapsed"  # per-device list of collapsed groups, kept in the config file
+
+
+def setting_group(name):
+    """The group a setting with this name is shown in."""
+    for group, names, prefixes in _GROUP_RULES:
+        if name in names or name.startswith(prefixes):
+            return group
+    return GROUP_OTHER
+
+
+class _SettingsGroup(Gtk.VBox):
+    """A heading that shows or hides the settings under it.
+
+    Built from a button and a revealer rather than a Gtk.Expander: some themes
+    style every arrow inside an expander, which turns the combo box arrows of
+    the settings in it sideways.
+    """
+
+    def __init__(self, device, group, expanded):
+        super().__init__(homogeneous=False, spacing=0)
+        self._device = device
+        self._group = group
+        self._arrow = Gtk.Image()
+        title = Gtk.Label(xalign=0)
+        title.set_markup("<b>" + GLib.markup_escape_text(_GROUP_LABELS[group]) + "</b>")
+        hbox = Gtk.HBox(homogeneous=False, spacing=6)
+        hbox.pack_start(self._arrow, False, False, 0)
+        hbox.pack_start(title, True, True, 0)
+        header = Gtk.Button()
+        header.set_relief(Gtk.ReliefStyle.NONE)
+        header.set_focus_on_click(False)
+        header.add(hbox)
+        header.connect(GtkSignal.CLICKED.value, self._toggle)
+        self._revealer = Gtk.Revealer()
+        self._revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self._inner = Gtk.VBox(homogeneous=False, spacing=4)
+        self._inner.set_margin_start(12)
+        self._inner.set_margin_bottom(4)
+        self._revealer.add(self._inner)
+        self.set_margin_top(4)
+        self.pack_start(header, False, False, 0)
+        self.pack_start(self._revealer, False, False, 0)
+        self.show_all()
+        self._set_expanded(expanded)
+
+    def _set_expanded(self, expanded):
+        self._revealer.set_reveal_child(expanded)
+        self._arrow.set_from_icon_name("pan-down-symbolic" if expanded else "pan-end-symbolic", Gtk.IconSize.MENU)
+
+    def _toggle(self, *_args):
+        expanded = not self._revealer.get_reveal_child()
+        self._set_expanded(expanded)
+        persister = getattr(self._device, "persister", None)
+        if persister is not None:
+            collapsed = [g for g in persister.get(_KEY_COLLAPSED, []) if g != self._group]
+            if not expanded:
+                collapsed.append(self._group)
+            persister[_KEY_COLLAPSED] = sorted(collapsed, key=_GROUP_ORDER.index)
+
+
+def _create_group(device, group):
+    persister = getattr(device, "persister", None)
+    collapsed = persister.get(_KEY_COLLAPSED, []) if persister else []
+    return _SettingsGroup(device, group, group not in collapsed)
+
+
+def _group_for(device, device_id, group):
+    """The expander for this device and group, created in group order if missing."""
+    key = (device_id[0], device_id[1], group)
+    expander = _groups.get(key)
+    if expander is None:
+        expander = _create_group(device, group)
+        _groups[key] = expander
+        _box.pack_start(expander, False, False, 0)
+        # keep this device's groups in the standard order
+        for g in _GROUP_ORDER:
+            e = _groups.get((device_id[0], device_id[1], g))
+            if e is not None:
+                _box.reorder_child(e, -1)
+    return expander
+
+
 # config panel
 _box = None
 _items = {}
+_groups = {}
 
 
 def create():
@@ -1163,9 +1320,13 @@ def update(device, is_online=None):
             if sbox is None:
                 continue
             _items[k] = sbox
-            _box.pack_start(sbox, False, False, 0)
+            _group_for(device, device_id, setting_group(s.name))._inner.pack_start(sbox, False, False, 0)
         sensitive = device.persister.get_sensitivity(s.name) if device.persister else True
         _read_async(s, False, sbox, is_online, sensitive)
+
+    # show only this device's groups that have something in them
+    for k, expander in _groups.items():
+        expander.set_visible(k[0:2] == device_id and bool(expander._inner.get_children()))
 
     _apply_rgb_gates(device)
     _box.set_visible(True)
@@ -1179,14 +1340,20 @@ def clean(device):
     device_id = (device.receiver.path if device.receiver else device.path, device.number)
     for k in list(_items.keys()):
         if k[0:2] == device_id:
-            _box.remove(_items[k])
-            del _items[k]
+            sbox = _items.pop(k)
+            parent = sbox.get_parent()
+            if parent is not None:
+                parent.remove(sbox)
+    for k in list(_groups.keys()):
+        if k[0:2] == device_id:
+            _box.remove(_groups.pop(k))
 
 
 def destroy():
     global _box
     _box = None
     _items.clear()
+    _groups.clear()
 
 
 def change_setting(device, setting, values):
