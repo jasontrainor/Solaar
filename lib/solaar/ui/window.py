@@ -122,12 +122,13 @@ def _create_receiver_panel():
 def _create_device_panel():
     p = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
 
+    # Battery, link and light level sit side by side on one line: icon and
+    # value only, with the label kept for the tooltip and screen readers.
     def _status_line(label_text):
-        b = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-        b.set_size_request(10, 28)
+        b = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 6)
 
         b._label = Gtk.Label(label=label_text)
-        b._label.set_size_request(170, 10)
+        b._label.set_no_show_all(True)
         b.pack_start(b._label, False, False, 0)
 
         b._icon = Gtk.Image()
@@ -138,15 +139,21 @@ def _create_device_panel():
 
         return b
 
+    status = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 24)
+    status.set_margin_top(2)
+    status.set_margin_bottom(2)
+
     p._battery = _status_line(_("Battery"))
-    p.pack_start(p._battery, False, False, 0)
+    status.pack_start(p._battery, False, False, 0)
 
     p._secure = _status_line(_("Wireless Link"))
     p._secure._icon.set_from_icon_name("dialog-warning", _INFO_ICON_SIZE)
-    p.pack_start(p._secure, False, False, 0)
+    status.pack_start(p._secure, False, False, 0)
 
     p._lux = _status_line(_("Lighting"))
-    p.pack_start(p._lux, False, False, 0)
+    status.pack_start(p._lux, False, False, 0)
+
+    p.pack_start(status, False, False, 0)
 
     p.pack_start(Gtk.Separator.new(Gtk.Orientation.HORIZONTAL), False, False, 0)  # spacer
 
@@ -248,7 +255,7 @@ def _create_info_panel():
 
 def _create_tree(model):
     tree = Gtk.TreeView()
-    tree.set_size_request(330, 0)  # enough width for simple setups
+    tree.set_size_request(260, 0)  # enough for device names and battery levels; the settings get the rest
     tree.set_headers_visible(False)
     tree.set_show_expanders(False)
     tree.set_level_indentation(20)
