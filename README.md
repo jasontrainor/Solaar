@@ -29,6 +29,8 @@ The rest of this README describes upstream Solaar. On top of upstream, this fork
   - **Default** does what the button does in an onboard profile: on the G502 X PLUS the DPI buttons
     step through the profile's DPI levels, the sniper button holds its shift DPI, and the wheel
     tilt scrolls sideways. The DPI levels are taken from the onboard profile Solaar last used.
+  - A DPI set with the DPI buttons is saved, like one set in Solaar, so it comes back when the mouse
+    reconnects. DPI Shift is temporary.
   - The mouse forgets the mapping when it loses power. Solaar re-applies it whenever the mouse
     connects.
 
@@ -43,21 +45,40 @@ The rest of this README describes upstream Solaar. On top of upstream, this fork
       solaar config "G502 X PLUS" onboard-buttons 4 Back
 
   Only one of the two is active at a time. The other is greyed out, depending on Onboard Profiles.
-- **On-screen DPI** (`dpi-osd`): when the DPI buttons change the DPI, the new DPI pops up on screen,
-  with a dot for each DPI level. DPI Shift (the sniper button) shows while it is held, then the DPI
-  it goes back to. It works in host mode and with an onboard profile, and can be set to
-  *Off*, *DPI changes* or *DPI changes and DPI Shift*.
-  - *On-screen style*: **Solaar overlay** (its own card, drawn above other windows; under Wayland it
-    goes through XWayland so it can choose where it appears), **Desktop OSD** (KDE Plasma's own
-    popup, like the volume one) or **Notification**.
-  - *On-screen position* (9 places on the primary screen), *On-screen time* (0.5–5 seconds) and
-    *On-screen size* (Small, Medium, Large) set up the Solaar overlay. Changing any of these shows a preview.
 
-      solaar config "G502 X PLUS" dpi-osd-position "Top Right"
+### On-screen DPI
+When the DPI buttons change the DPI, the new DPI pops up on screen as a small card, with a dot for
+each DPI level. Holding DPI Shift (the sniper button) shows **DPI SHIFT** and its DPI for as long as
+the button is held, then the DPI it goes back to. It works in host mode and with an onboard profile
+(with an onboard profile the mouse may not report DPI Shift). Solaar needs to be running.
+
+The settings are on each mouse's page, under Pointer and Scrolling. Changing any of them shows a preview.
+
+| Setting | Choices |
+|---|---|
+| On-screen DPI (`dpi-osd`) | Off, DPI changes, DPI changes and DPI Shift (default) |
+| On-screen style (`dpi-osd-style`) | **Solaar overlay** (default), **Desktop OSD** (KDE Plasma's own popup, like the volume one), **Notification** |
+| On-screen position (`dpi-osd-position`) | Top Left, Top, Top Right, Left, Center, Right, Bottom Left, Bottom (default), Bottom Right |
+| On-screen time (`dpi-osd-duration`) | 0.5 to 5 seconds (default 1.5) |
+| On-screen size (`dpi-osd-size`) | Small, Medium (default), Large |
+
+Position, time and size are for the Solaar overlay, and are greyed out for the other styles.
+The overlay appears on the primary screen, stays above other windows and lets clicks through.
+Under Wayland it is drawn through XWayland, because a Wayland window can't choose where it goes.
+
+    solaar config "G502 X PLUS" dpi-osd-position "Top Right"
+    solaar config "G502 X PLUS" dpi-osd-style "Desktop OSD"
+
+### Lighting
 - **LED Control keeps the onboard profile on.** Taking over the lighting used to switch the device to
   host mode every time it connected, which turned off the onboard profile and its button mapping.
   When Onboard Profiles is set to a profile, the device now stays in it.
   (While a profile is active, the device may show the profile's lighting rather than Solaar's.)
+- **Idle lighting**: a *When not in use* choice (Always on, Dim when idle, Dim then off,
+  Off when idle) sets *Idle after*, *When idle* and *Lights off after* together.
+  - Lights off now also works with *Idle after* set to Never.
+  - The *Disabled* choice of the idle timeouts is now called *Never*. Rules or commands that use
+    the old name need updating.
 
 ### Per-key lighting editor
 - **Color themes**: save, apply, import, export and delete named per-key themes from the editor's
@@ -90,9 +111,6 @@ The rest of this README describes upstream Solaar. On top of upstream, this fork
 - Rule Editor, About and Quit are in a header bar instead of a row of buttons at the bottom.
 - Battery, link and light level sit on one line, and the device list is narrower.
 - The scrollbar no longer covers the controls at the right-hand edge.
-- **Idle lighting**: a *When not in use* choice (Always on, Dim when idle, Dim then off,
-  Off when idle) sets *Idle after*, *When idle* and *Lights off after* together. Lights off now
-  also works with Idle after set to Never.
 
 ### Fixes
 - A query like `solaar config <device> per-key-lighting <KEY>` no longer wipes every saved key color.
@@ -103,6 +121,10 @@ The rest of this README describes upstream Solaar. On top of upstream, this fork
 ### Development
 - `make dev_venv` builds a local `.venv` that reuses the system GTK bindings and has the test and lint tools.
   `make dev_test` and `make dev_lint` run pytest and ruff from it.
+- To run an installed Solaar straight from a checkout, install it as editable into its pipx venv
+  without rebuilding the GTK bindings, then restart Solaar after changing the code:
+
+      ~/.local/share/pipx/venvs/solaar/bin/python -m pip install --no-deps --editable .
 
 
 [![codecov](https://codecov.io/gh/pwr-Solaar/Solaar/graph/badge.svg?token=D7YWFEWID6)](https://codecov.io/gh/pwr-Solaar/Solaar)
