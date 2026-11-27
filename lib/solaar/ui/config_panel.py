@@ -22,6 +22,7 @@ from threading import Timer
 
 import gi
 
+from logitech_receiver import dpi_osd
 from logitech_receiver import hidpp20
 from logitech_receiver import settings
 from logitech_receiver import settings_templates
@@ -75,6 +76,10 @@ def _write_async(setting, value, sbox, sensitive=True, key=None):
             v = None
         if sb:
             GLib.idle_add(_update_setting_item, sb, v, True, sensitive, priority=99)
+        if v is not None and setting.name.startswith(dpi_osd.SETTING):
+            from solaar.ui import dpi_osd as dpi_osd_ui
+
+            GLib.idle_add(dpi_osd_ui.preview, setting._device)  # show what the new choice looks like
 
     if sbox:
         sbox._control.set_sensitive(False)
@@ -976,6 +981,8 @@ def _refresh_idle_presets(device):
 
 
 _PROFILE_DEPENDENT_NAMES = ("host-buttons", "onboard-buttons")
+# rows that only matter when the on-screen DPI is on, and some only for Solaar's overlay
+_DPI_OSD_DEPENDENT_NAMES = (dpi_osd.STYLE, dpi_osd.POSITION, dpi_osd.DURATION, dpi_osd.SIZE)
 
 
 def _onboard_profile_in_use(device):
@@ -1085,6 +1092,11 @@ def _gate_blocks(device, name):
     """Single source of truth for "is this setting's row gated off?". Used by
     `_apply_rgb_gates` to grey rows and by `_update_setting_item` so async-read
     completions can't undo the grey-out when their callbacks land later."""
+    if name in _DPI_OSD_DEPENDENT_NAMES:
+        if dpi_osd.saved(device, dpi_osd.SETTING) == dpi_osd.OFF:
+            return True
+        # position, time and size are for Solaar's overlay only
+        return name != dpi_osd.STYLE and dpi_osd.saved(device, dpi_osd.STYLE) != dpi_osd.STYLE_OVERLAY
     if name in _PROFILE_DEPENDENT_NAMES:
         # host-buttons works in host mode, onboard-buttons edits the profile in use
         return _onboard_profile_in_use(device) == (name == "host-buttons")
@@ -1119,6 +1131,7 @@ def _apply_rgb_gates(device):
             or name == "per-key-lighting"
             or name in _HEADSET_LED_DEPENDENT_NAMES
             or name in _PROFILE_DEPENDENT_NAMES
+            or name in _DPI_OSD_DEPENDENT_NAMES
         ):
             _set_row_sensitive(device, name, not _gate_blocks(device, name))
     _refresh_idle_presets(device)
@@ -1288,6 +1301,8 @@ def _update_setting_item(sbox, value, is_online=True, sensitive=True, null_okay=
         "onboard_profiles",
         "headset_led_control",
         "headset-onboard-effect",
+        dpi_osd.SETTING,
+        dpi_osd.STYLE,
     ) or name.startswith("rgb_zone_"):
         _apply_rgb_gates(sbox.setting._device)
     if name in _IDLE_PRESET_SETTINGS:

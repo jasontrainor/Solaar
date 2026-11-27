@@ -193,3 +193,22 @@ def test_wheel_tilt_scrolls_sideways(monkeypatch):
     handler(device, _spy(0))
     assert scrolls == [(-1, 0), (1, 0)]
     assert not setting._scroll_timers
+
+
+def test_dpi_buttons_are_reported_for_the_on_screen_display(monkeypatch):
+    shown = []
+    monkeypatch.setattr(T.dpi_osd, "handler", lambda dev, event: shown.append(event))
+    device = _Device(dpi=800)
+    setting = _setting(device)
+    setting.write({5: T.HOST_BUTTON_DPI_SHIFT, 9: T.HOST_BUTTON_DPI_UP})
+    handler = device.handlers["host-buttons"]
+    handler(device, _spy(1 << 8))  # DPI up
+    handler(device, _spy(0))
+    handler(device, _spy(1 << 4))  # DPI Shift held
+    handler(device, _spy(0))
+    levels = (400, 800, 1600, 3200)  # the fallback levels, as the device has no profiles
+    assert shown == [
+        T.dpi_osd.DpiEvent(1600, levels),
+        T.dpi_osd.DpiEvent(400, levels, shift=True),
+        T.dpi_osd.DpiEvent(1600, levels, shift_released=True),
+    ]

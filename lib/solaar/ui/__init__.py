@@ -33,6 +33,7 @@ from solaar.ui.window import find_device
 from . import common
 from . import desktop_notifications
 from . import diversion_rules
+from . import dpi_osd
 from . import tray
 from . import window
 
@@ -59,6 +60,7 @@ def _startup(app, startup_hook, use_tray, show_window):
     logger.debug("startup registered=%s, remote=%s", app.get_is_registered(), app.get_is_remote())
     common.start_async()
     desktop_notifications.init()
+    dpi_osd.init()
     if use_tray:
         tray.init(lambda _ignore: window.destroy())
     window.init(show_window, use_tray)
@@ -93,6 +95,7 @@ def _shutdown(_app, shutdown_hook):
     shutdown_hook()
     common.stop_async()
     tray.destroy()
+    dpi_osd.uninit()
     desktop_notifications.uninit()
 
 

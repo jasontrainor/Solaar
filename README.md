@@ -43,6 +43,17 @@ The rest of this README describes upstream Solaar. On top of upstream, this fork
       solaar config "G502 X PLUS" onboard-buttons 4 Back
 
   Only one of the two is active at a time. The other is greyed out, depending on Onboard Profiles.
+- **On-screen DPI** (`dpi-osd`): when the DPI buttons change the DPI, the new DPI pops up on screen,
+  with a dot for each DPI level. DPI Shift (the sniper button) shows while it is held, then the DPI
+  it goes back to. It works in host mode and with an onboard profile, and can be set to
+  *Off*, *DPI changes* or *DPI changes and DPI Shift*.
+  - *On-screen style*: **Solaar overlay** (its own card, drawn above other windows; under Wayland it
+    goes through XWayland so it can choose where it appears), **Desktop OSD** (KDE Plasma's own
+    popup, like the volume one) or **Notification**.
+  - *On-screen position* (9 places on the primary screen), *On-screen time* (0.5–5 seconds) and
+    *On-screen size* (Small, Medium, Large) set up the Solaar overlay. Changing any of these shows a preview.
+
+      solaar config "G502 X PLUS" dpi-osd-position "Top Right"
 - **LED Control keeps the onboard profile on.** Taking over the lighting used to switch the device to
   host mode every time it connected, which turned off the onboard profile and its button mapping.
   When Onboard Profiles is set to a profile, the device now stays in it.

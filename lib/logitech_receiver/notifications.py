@@ -31,6 +31,7 @@ from solaar.i18n import _
 from . import base
 from . import common
 from . import diversion
+from . import dpi_osd
 from . import hidpp10
 from . import hidpp10_constants
 from . import hidpp20
@@ -406,13 +407,14 @@ def _process_feature_notification(device: Device, notification: HIDPPNotificatio
             elif notification.address == 0x10:
                 resolution_index = struct.unpack("!B", notification.data[:1])[0]
                 profile_sector = struct.unpack("!H", device.feature_request(SupportedFeature.ONBOARD_PROFILES, 0x40)[:2])[0]
-                if device.setting_callback:
-                    for profile in device.profiles.profiles.values() if device.profiles else []:
-                        if profile.sector == profile_sector:
-                            device.setting_callback(
-                                device, settings_templates.AdjustableDpi, [profile.resolutions[resolution_index]]
-                            )
-                            break
+                for profile in device.profiles.profiles.values() if device.profiles else []:
+                    if profile.sector == profile_sector:
+                        dpi = profile.resolutions[resolution_index]
+                        levels = [r for r in profile.resolutions if 0 < r < 0xFFFF]
+                        dpi_osd.dpi_changed(device, dpi, levels)
+                        if device.setting_callback:
+                            device.setting_callback(device, settings_templates.AdjustableDpi, [dpi])
+                        break
 
     elif feature == SupportedFeature.BRIGHTNESS_CONTROL:
         if notification.address > 0x10:

@@ -36,6 +36,7 @@ from . import descriptors
 from . import desktop_notifications
 from . import device_quirks
 from . import diversion
+from . import dpi_osd
 from . import exceptions
 from . import headset_rgb
 from . import hidpp10_constants
@@ -1128,10 +1129,14 @@ class HostButtons(settings.Settings):
         if action == HOST_BUTTON_DPI_SHIFT:
             if pressed and self._shift_restore is None:
                 self._shift_restore = dpi.read()
-                dpi.write(_nearest_choice(dpi, shift), save=False)
+                value = _nearest_choice(dpi, shift)
+                dpi.write(value, save=False)
+                dpi_osd.dpi_changed(device, value, levels, shift=True)
             elif not pressed and self._shift_restore is not None:
-                dpi.write(_nearest_choice(dpi, self._shift_restore), save=False)
+                value = _nearest_choice(dpi, self._shift_restore)
+                dpi.write(value, save=False)
                 self._shift_restore = None
+                dpi_osd.dpi_changed(device, value, levels, shift_released=True)
             return
         if not pressed:
             return
@@ -1148,6 +1153,7 @@ class HostButtons(settings.Settings):
         if logger.isEnabledFor(logging.INFO):
             logger.info("%s: button sets DPI %s", device, value)
         dpi.write(value)
+        dpi_osd.dpi_changed(device, value, levels)
         if device.setting_callback:
             device.setting_callback(device, type(dpi), [value])
 
@@ -1735,6 +1741,146 @@ class ExtendedAdjustableDpi(settings.Setting):
             else:
                 data_bytes += b"\x00"
             return data_bytes
+
+
+def _solaar_only_rw(name):
+    """rw_class for a setting that Solaar acts on itself: reads the saved value, writes nothing."""
+
+    class rw_class:
+        def __init__(self, feature, **kwargs):
+            self.feature = feature
+            self.kind = settings.FeatureRW.kind
+
+        def read(self, device):
+            return common.int2bytes(dpi_osd.saved(device, name), 2)
+
+        def write(self, device, data_bytes):
+            return True
+
+    return rw_class
+
+
+class DpiOsd(settings.Setting):
+    name = dpi_osd.SETTING
+    label = _("On-screen DPI")
+    description = (
+        _("Show the DPI on screen when the mouse buttons change it.")
+        + "\n"
+        + _("DPI Shift shows while the button is held.")
+        + "\n"
+        + _("Needs Solaar running.")
+    )
+    feature = _F.ADJUSTABLE_DPI
+    choices_universe = common.NamedInts(
+        **{
+            "Off": dpi_osd.OFF,
+            "DPI changes": dpi_osd.CHANGES,
+            "DPI changes and DPI Shift": dpi_osd.CHANGES_AND_SHIFT,
+        }
+    )
+    validator_class = settings_validator.ChoicesValidator
+    validator_options = {"choices": choices_universe, "byte_count": 2}
+    rw_class = _solaar_only_rw(dpi_osd.SETTING)
+
+
+class DpiOsdStyle(settings.Setting):
+    name = dpi_osd.STYLE
+    label = _("On-screen style")
+    description = (
+        _("Solaar overlay: Solaar's own display, with the position, time and size below.")
+        + "\n"
+        + _("Desktop OSD: the desktop's own on-screen display (KDE Plasma), like the volume popup.")
+        + "\n"
+        + _("Notification: a desktop notification.")
+    )
+    feature = _F.ADJUSTABLE_DPI
+    choices_universe = common.NamedInts(
+        **{
+            "Solaar overlay": dpi_osd.STYLE_OVERLAY,
+            "Desktop OSD": dpi_osd.STYLE_DESKTOP,
+            "Notification": dpi_osd.STYLE_NOTIFICATION,
+        }
+    )
+    validator_class = settings_validator.ChoicesValidator
+    validator_options = {"choices": choices_universe, "byte_count": 2}
+    rw_class = _solaar_only_rw(dpi_osd.STYLE)
+
+
+class DpiOsdPosition(settings.Setting):
+    name = dpi_osd.POSITION
+    label = _("On-screen position")
+    description = _("Where the Solaar overlay appears on the primary screen.")
+    feature = _F.ADJUSTABLE_DPI
+    choices_universe = common.NamedInts(
+        **{
+            "Top Left": dpi_osd.TOP_LEFT,
+            "Top": dpi_osd.TOP,
+            "Top Right": dpi_osd.TOP_RIGHT,
+            "Left": dpi_osd.LEFT,
+            "Center": dpi_osd.CENTER,
+            "Right": dpi_osd.RIGHT,
+            "Bottom Left": dpi_osd.BOTTOM_LEFT,
+            "Bottom": dpi_osd.BOTTOM,
+            "Bottom Right": dpi_osd.BOTTOM_RIGHT,
+        }
+    )
+    validator_class = settings_validator.ChoicesValidator
+    validator_options = {"choices": choices_universe, "byte_count": 2}
+    rw_class = _solaar_only_rw(dpi_osd.POSITION)
+
+
+class DpiOsdDuration(settings.Setting):
+    name = dpi_osd.DURATION
+    label = _("On-screen time")
+    description = _("How long the Solaar overlay stays up after a change.")
+    feature = _F.ADJUSTABLE_DPI
+    choices_universe = common.NamedInts(
+        **{
+            "0.5 Seconds": 500,
+            "1 Second": 1000,
+            "1.5 Seconds": 1500,
+            "2 Seconds": 2000,
+            "3 Seconds": 3000,
+            "5 Seconds": 5000,
+        }
+    )
+    validator_class = settings_validator.ChoicesValidator
+    validator_options = {"choices": choices_universe, "byte_count": 2}
+    rw_class = _solaar_only_rw(dpi_osd.DURATION)
+
+
+class DpiOsdSize(settings.Setting):
+    name = dpi_osd.SIZE
+    label = _("On-screen size")
+    description = _("How big the Solaar overlay is.")
+    feature = _F.ADJUSTABLE_DPI
+    choices_universe = common.NamedInts(
+        **{"Small": dpi_osd.SIZE_SMALL, "Medium": dpi_osd.SIZE_MEDIUM, "Large": dpi_osd.SIZE_LARGE}
+    )
+    validator_class = settings_validator.ChoicesValidator
+    validator_options = {"choices": choices_universe, "byte_count": 2}
+    rw_class = _solaar_only_rw(dpi_osd.SIZE)
+
+
+# The same settings for mice with the extended DPI feature (a device has one or the other).
+class DpiOsdExtended(DpiOsd):
+    feature = _F.EXTENDED_ADJUSTABLE_DPI
+
+
+class DpiOsdStyleExtended(DpiOsdStyle):
+    feature = _F.EXTENDED_ADJUSTABLE_DPI
+
+
+class DpiOsdPositionExtended(DpiOsdPosition):
+    feature = _F.EXTENDED_ADJUSTABLE_DPI
+
+
+class DpiOsdDurationExtended(DpiOsdDuration):
+    feature = _F.EXTENDED_ADJUSTABLE_DPI
+
+
+class DpiOsdSizeExtended(DpiOsdSize):
+    feature = _F.EXTENDED_ADJUSTABLE_DPI
 
 
 class SpeedChange(settings.Setting):
@@ -5064,6 +5210,16 @@ SETTINGS: list[settings.Setting] = [
     PointerSpeed,  # simple
     AdjustableDpi,  # working
     ExtendedAdjustableDpi,
+    DpiOsd,
+    DpiOsdExtended,
+    DpiOsdStyle,
+    DpiOsdStyleExtended,
+    DpiOsdPosition,
+    DpiOsdPositionExtended,
+    DpiOsdDuration,
+    DpiOsdDurationExtended,
+    DpiOsdSize,
+    DpiOsdSizeExtended,
     SpeedChange,
     #    Backlight,  # not working - disabled temporarily
     Backlight2,  # working
